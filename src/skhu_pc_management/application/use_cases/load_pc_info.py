@@ -12,3 +12,6 @@ class LoadPcInfo:
 
     def execute(self) -> PcInfo:
         return self.pc_info_reader.read()
+
+
+LoadPcInfoUseCase = LoadPcInfo

@@ -17,12 +17,26 @@ class FakePcInfoReader:
 
 
 class FakeProductKeyProvider:
-    def get_windows_product_key(self) -> str | None:
+    def get_windows_product_key(self, edition: str | None = None) -> str | None:
         return "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+
+    def get_office_product_key(self, version: str | None = None) -> str | None:
+        return "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+
+
+class FakeClipboard:
+    def set_text(self, text: str) -> None:
+        pass
+
+
+class FakeProcessLauncher:
+    def launch(self, executable, args=()) -> None:
+        pass
 
 
 def test_product_key_provider_protocol_exists() -> None:
     assert hasattr(ProductKeyProvider, "get_windows_product_key")
+    assert hasattr(ProductKeyProvider, "get_office_product_key")
 
 
 def test_fake_port_can_create_use_case() -> None:
@@ -34,12 +48,12 @@ def test_fake_port_can_create_use_case() -> None:
 
 
 def test_activate_windows_with_fake_provider_does_not_execute_activation() -> None:
-    use_case = ActivateWindows(FakeProductKeyProvider())
+    use_case = ActivateWindows(FakeProductKeyProvider(), FakeClipboard(), FakeProcessLauncher())
 
     result = use_case.execute()
 
-    assert result.success is False
-    assert "not implemented" in result.message
+    assert result.success is True
+    assert result.action == "windows_activation"
 
 
 def test_null_product_key_provider_returns_none() -> None:

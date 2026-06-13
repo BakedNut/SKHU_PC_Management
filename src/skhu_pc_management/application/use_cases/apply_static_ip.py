@@ -2,15 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from skhu_pc_management.domain.network.models import StaticIpConfig
-from skhu_pc_management.domain.settings.models import ApplyResult
+from skhu_pc_management.domain.network.models import NetworkConfigResult, StaticIpConfig
+from skhu_pc_management.ports.network_configurator import NetworkConfigurator
 
 
 @dataclass(frozen=True)
 class ApplyStaticIp:
-    def execute(self, config: StaticIpConfig) -> ApplyResult:
-        return ApplyResult(
-            name="apply_static_ip",
-            success=False,
-            message=f"Static IP application is not implemented yet: {config.adapter_name}",
-        )
+    network_configurator: NetworkConfigurator
+
+    def execute(self, config: StaticIpConfig) -> NetworkConfigResult:
+        try:
+            return self.network_configurator.apply_static_ip(config)
+        except Exception as exc:
+            return NetworkConfigResult(
+                operation="apply_static_ip",
+                success=False,
+                adapter_name=config.adapter_name,
+                message=str(exc),
+            )
+
+
+ApplyStaticIpUseCase = ApplyStaticIp

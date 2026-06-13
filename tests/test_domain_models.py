@@ -1,7 +1,7 @@
 from skhu_pc_management.domain.checks.models import CheckResult
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, StaticIpConfig
 from skhu_pc_management.domain.pc.models import DiskInfo, PcInfo
-from skhu_pc_management.domain.settings.definitions import RegistrySettingDefinition
+from skhu_pc_management.domain.settings.definitions import RegistrySettingDefinition, SettingDefinition
 from skhu_pc_management.domain.settings.models import ApplyResult, SettingStatus
 
 
@@ -16,12 +16,18 @@ def test_domain_models_can_be_created() -> None:
         disks=[disk],
     )
     definition = RegistrySettingDefinition(
+        setting_id="example",
         name="example",
         root="HKCU",
         path=r"Software\Example",
         value_name="Enabled",
         expected_value=1,
         value_type="REG_DWORD",
+    )
+    setting_definition = SettingDefinition(
+        setting_id="example",
+        name="Example setting",
+        registry_values=(definition,),
     )
     static_ip = StaticIpConfig(
         adapter_name="Ethernet",
@@ -37,6 +43,7 @@ def test_domain_models_can_be_created() -> None:
 
     assert pc_info.disks == [disk]
     assert definition.expected_value == 1
+    assert setting_definition.registry_values == (definition,)
     assert static_ip.adapter_name == "Ethernet"
     assert adapter.is_enabled is True
     assert apply_result.success is True
