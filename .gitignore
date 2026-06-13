@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+secrets/product_keys.py
+.test_deps/

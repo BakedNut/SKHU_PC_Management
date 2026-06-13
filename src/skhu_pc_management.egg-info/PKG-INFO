@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: skhu-pc-management
+Version: 0.1.0
+Summary: Python PySide6 rewrite scaffold for SKHU PC Management
+Requires-Python: >=3.12
+Requires-Dist: PySide6
+Requires-Dist: pyinstaller
+Requires-Dist: pytest
+Requires-Dist: pywin32
+Requires-Dist: WMI
