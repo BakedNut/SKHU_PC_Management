@@ -6,7 +6,10 @@ from skhu_pc_management.domain.checks.models import (
     CheckStatus,
     InstalledProgramInfo,
     PowerSettingsStatus,
+    ProgramVersionInfo,
     RecycleBinStatus,
+    ScheduledTaskInfo,
+    ac_timeout_display,
 )
 
 __all__ = [
@@ -17,5 +20,8 @@ __all__ = [
     "CheckStatus",
     "InstalledProgramInfo",
     "PowerSettingsStatus",
+    "ProgramVersionInfo",
     "RecycleBinStatus",
+    "ScheduledTaskInfo",
+    "ac_timeout_display",
 ]

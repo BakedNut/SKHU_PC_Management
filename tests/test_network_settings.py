@@ -61,6 +61,25 @@ class FakeCommandRunner:
         return self.outputs.get(command_tuple, "")
 
 
+class FailingPowerShellCommandRunner(FakeCommandRunner):
+    def run(self, command: Sequence[str]) -> str:
+        command_tuple = tuple(command)
+        self.commands.append(command_tuple)
+        if command_tuple[:1] == ("powershell",):
+            raise RuntimeError("powershell failed")
+        return self.outputs.get(command_tuple, "")
+
+
+POWERSHELL_ADAPTER_COMMAND = (
+    "powershell",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    "Get-NetAdapter | Select-Object Name, InterfaceDescription, Status, MacAddress | ConvertTo-Json -Depth 3",
+)
+
+
 def test_valid_static_ip_config_can_be_created() -> None:
     config = StaticIpConfig(
         adapter_name=" Ethernet ",
@@ -247,3 +266,135 @@ Configuration for interface "Ethernet"
     assert adapters[0].gateway == "192.168.0.1"
     assert adapters[0].dns_servers == ("8.8.8.8", "1.1.1.1")
     assert adapters[0].is_dhcp_enabled is False
+
+
+def test_network_configurator_reads_powershell_json_adapters() -> None:
+    output = """
+[
+  {
+    "Name": "이더넷",
+    "InterfaceDescription": "Realtek Gaming 2.5GbE Family Controller",
+    "Status": "Up",
+    "MacAddress": "00-11-22-33-44-55"
+  },
+  {
+    "Name": "Wi-Fi",
+    "InterfaceDescription": "RZ616 Wi-Fi 6E 160MHz",
+    "Status": "Disconnected",
+    "MacAddress": "AA-BB-CC-DD-EE-FF"
+  }
+]
+"""
+    command_runner = FakeCommandRunner({POWERSHELL_ADAPTER_COMMAND: output})
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert [adapter.name for adapter in adapters] == ["이더넷", "Wi-Fi"]
+    assert adapters[0].description == "Realtek Gaming 2.5GbE Family Controller"
+    assert adapters[0].is_enabled is True
+    assert adapters[0].mac_address == "00-11-22-33-44-55"
+    assert adapters[1].description == "RZ616 Wi-Fi 6E 160MHz"
+    assert adapters[1].is_enabled is False
+
+
+def test_network_configurator_filters_virtual_powershell_adapters() -> None:
+    output = """
+[
+  {"Name": "VirtualBox Host-Only Network", "InterfaceDescription": "VirtualBox Adapter", "Status": "Up", "MacAddress": "00"},
+  {"Name": "OpenVPN TAP", "InterfaceDescription": "TAP-Windows Adapter V9", "Status": "Up", "MacAddress": "11"},
+  {"Name": "Tailscale", "InterfaceDescription": "Tailscale Tunnel", "Status": "Up", "MacAddress": "22"},
+  {"Name": "Bluetooth Network Connection", "InterfaceDescription": "Bluetooth Device", "Status": "Disconnected", "MacAddress": "33"},
+  {"Name": "Wi-Fi", "InterfaceDescription": "RZ616 Wi-Fi 6E 160MHz", "Status": "Disconnected", "MacAddress": "44"}
+]
+"""
+    command_runner = FakeCommandRunner({POWERSHELL_ADAPTER_COMMAND: output})
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert [adapter.name for adapter in adapters] == ["Wi-Fi"]
+
+
+def test_network_configurator_handles_single_powershell_json_object() -> None:
+    output = """
+{
+  "Name": "이더넷",
+  "InterfaceDescription": "Realtek Gaming 2.5GbE Family Controller",
+  "Status": "Up",
+  "MacAddress": "00-11-22-33-44-55"
+}
+"""
+    command_runner = FakeCommandRunner({POWERSHELL_ADAPTER_COMMAND: output})
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert len(adapters) == 1
+    assert adapters[0].name == "이더넷"
+
+
+def test_network_configurator_falls_back_to_netsh_when_powershell_fails() -> None:
+    show_interface = """
+Admin State    State          Type             Interface Name
+-------------------------------------------------------------------------
+Enabled        Connected      Dedicated        Ethernet
+"""
+    command_runner = FailingPowerShellCommandRunner(
+        {
+            ("netsh", "interface", "show", "interface"): show_interface,
+            ("netsh", "interface", "ip", "show", "config", "name=Ethernet"): "",
+        }
+    )
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert [adapter.name for adapter in adapters] == ["Ethernet"]
+    assert command_runner.commands[0] == POWERSHELL_ADAPTER_COMMAND
+    assert ("netsh", "interface", "show", "interface") in command_runner.commands
+
+
+def test_netsh_configurator_lists_non_english_physical_adapter_names() -> None:
+    show_interface = """
+Admin State    State          Type             Interface Name
+-------------------------------------------------------------------------
+Enabled        Connected      Dedicated        회사 유선랜
+Enabled        Connected      Dedicated        Teredo Tunneling Pseudo-Interface
+"""
+    command_runner = FakeCommandRunner(
+        {
+            ("netsh", "interface", "show", "interface"): show_interface,
+            ("netsh", "interface", "ip", "show", "config", "name=회사 유선랜"): "",
+        }
+    )
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert [adapter.name for adapter in adapters] == ["회사 유선랜"]
+
+
+def test_netsh_configurator_parses_korean_ip_config_output() -> None:
+    show_interface = """
+관리자 상태     상태            종류             인터페이스 이름
+-------------------------------------------------------------------------
+사용             연결됨          전용             이더넷
+"""
+    adapter_config = """
+인터페이스 "이더넷"에 대한 구성
+    DHCP 사용:                             아니요
+    IP 주소:                               192.168.10.20
+    서브넷 접두사:                         192.168.10.0/24(마스크 255.255.255.0)
+    기본 게이트웨이:                       192.168.10.1
+    DNS 서버:                              8.8.8.8
+                                           1.1.1.1
+"""
+    command_runner = FakeCommandRunner(
+        {
+            ("netsh", "interface", "show", "interface"): show_interface,
+            ("netsh", "interface", "ip", "show", "config", "name=이더넷"): adapter_config,
+        }
+    )
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert adapters[0].ip_addresses == ("192.168.10.20",)
+    assert adapters[0].subnet_mask == "255.255.255.0"
+    assert adapters[0].gateway == "192.168.10.1"
+    assert adapters[0].dns_servers == ("8.8.8.8", "1.1.1.1")

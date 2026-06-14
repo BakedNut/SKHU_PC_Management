@@ -5,7 +5,12 @@ from typing import Any
 
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo, LoadPcInfoUseCase
 from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
-from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import WmiPcInfoReader
+from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import (
+    _PhysicalDiskMetadata,
+    _build_disk_info,
+    _format_rated_size,
+    WmiPcInfoReader,
+)
 
 
 class FakePcInfoReader:
@@ -31,7 +36,12 @@ class WmiItem:
     AdapterCompatibility: str | None = None
     Model: str | None = None
     Size: str | None = None
+    SerialNumber: str | None = None
     MediaRotationRate: str | None = None
+    MediaType: Any | None = None
+    InterfaceType: str | None = None
+    FriendlyName: str | None = None
+    BusType: Any | None = None
     SpecVersion: str | None = None
 
 
@@ -156,7 +166,12 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
             ],
             ("Win32_VideoController", None): [WmiItem(Name="NVIDIA RTX", AdapterCompatibility="NVIDIA")],
             ("Win32_DiskDrive", None): [
-                WmiItem(Model="Samsung NVMe SSD", Size=str(512 * 1024**3), MediaRotationRate="0")
+                WmiItem(
+                    Model="Samsung NVMe SSD",
+                    Size=str(512 * 1024**3),
+                    MediaRotationRate="0",
+                    InterfaceType="SCSI",
+                )
             ],
             ("Win32_Tpm", r"root\CIMV2\Security\MicrosoftTpm"): [WmiItem(SpecVersion="2.0, 1.3")],
         },
@@ -172,7 +187,18 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
     assert pc_info.memory_gb == 16.0
     assert pc_info.memory_modules[0].memory_type == "DDR4"
     assert pc_info.gpu_names == ["NVIDIA RTX"]
-    assert pc_info.disks == [DiskInfo(model="Samsung NVMe SSD", size_gb=512.0, disk_type="SSD")]
+    assert pc_info.disks == [
+        DiskInfo(
+            model="Samsung NVMe SSD",
+            size_gb=512.0,
+            actual_size_gib=512.0,
+            rated_size="512GB",
+            disk_type="SSD",
+            bus_type="NVMe",
+            display_type="SSD (NVMe)",
+            raw_size_bytes=512 * 1024**3,
+        )
+    ]
     assert pc_info.tpm_installed is True
     assert pc_info.tpm_version == "2.0"
     assert pc_info.secure_boot_enabled is True
@@ -202,3 +228,129 @@ def test_wmi_reader_returns_unknowns_when_values_are_missing() -> None:
     assert pc_info.tpm_installed is None
     assert pc_info.secure_boot_status == "Unknown"
     assert pc_info.boot_mode == "Unknown"
+
+
+def test_disk_info_can_be_built_from_win32_diskdrive_only() -> None:
+    disk = _build_disk_info(
+        WmiItem(Model="Samsung NVMe SSD", Size=str(256 * 1024**3), MediaRotationRate="0", InterfaceType="SCSI"),
+        [],
+    )
+
+    assert disk.model == "Samsung NVMe SSD"
+    assert disk.actual_size_gib == 256.0
+    assert disk.rated_size == "256GB"
+    assert disk.disk_type == "SSD"
+    assert disk.bus_type == "NVMe"
+    assert disk.display_type == "SSD (NVMe)"
+
+
+def test_disk_info_matches_msft_physical_disk_by_serial() -> None:
+    disk = _build_disk_info(
+        WmiItem(
+            Model="Samsung SSD 970 EVO Plus 500GB",
+            SerialNumber="S4EWNX0M123456",
+            Size=str(500 * 1024**3),
+            InterfaceType="SCSI",
+        ),
+        [
+            _PhysicalDiskMetadata(
+                friendly_name="Samsung SSD 970 EVO Plus 500GB",
+                serial_number="S4EWNX0M123456",
+                media_type="SSD",
+                bus_type="NVMe",
+                size_bytes=500 * 1024**3,
+            )
+        ],
+    )
+
+    assert disk.display_type == "SSD (NVMe)"
+    assert disk.bus_type == "NVMe"
+    assert disk.rated_size == "512GB"
+
+
+def test_disk_info_matches_msft_physical_disk_by_model_and_size_when_serial_is_missing() -> None:
+    disk = _build_disk_info(
+        WmiItem(Model="WDC WD10EZEX SATA Disk", Size=str(953 * 1024**3), InterfaceType="SCSI"),
+        [
+            _PhysicalDiskMetadata(
+                friendly_name="WDC WD10EZEX",
+                serial_number="",
+                media_type="HDD",
+                bus_type="SATA",
+                size_bytes=953 * 1024**3,
+            )
+        ],
+    )
+
+    assert disk.disk_type == "HDD"
+    assert disk.bus_type == "SATA"
+    assert disk.display_type == "HDD (SATA)"
+
+
+def test_disk_info_matches_msft_physical_disk_by_size_tolerance() -> None:
+    disk = _build_disk_info(
+        WmiItem(Model="Generic Disk", Size=str(476 * 1024**3), InterfaceType="SCSI"),
+        [
+            _PhysicalDiskMetadata(
+                friendly_name="Different Friendly Name",
+                serial_number="",
+                media_type="SSD",
+                bus_type="SATA",
+                size_bytes=(476 * 1024**3) + (2 * 1024**3),
+            )
+        ],
+    )
+
+    assert disk.display_type == "SSD (SATA)"
+    assert disk.rated_size == "512GB"
+
+
+def test_disk_rated_size_rounds_up_to_power_of_two() -> None:
+    assert _format_rated_size(476 * 1024**3) == "512GB"
+    assert _format_rated_size(953 * 1024**3) == "1TB"
+    assert _format_rated_size(29 * 1024**3) == "32GB"
+
+
+def test_wmi_reader_uses_msft_physical_disk_bus_and_media_data() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_DiskDrive", None): [
+                WmiItem(
+                    Model="Samsung SSD 970 EVO Plus 500GB",
+                    SerialNumber="S4EWNX0M123456",
+                    Size=str(500 * 1024**3),
+                    InterfaceType="SCSI",
+                )
+            ],
+            ("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage"): [
+                WmiItem(
+                    FriendlyName="Samsung SSD 970 EVO Plus 500GB",
+                    SerialNumber="S4EWNX0M123456",
+                    MediaType=4,
+                    BusType=17,
+                    Size=str(500 * 1024**3),
+                )
+            ],
+        }
+    )
+
+    disk = reader.read().disks[0]
+
+    assert disk.display_type == "SSD (NVMe)"
+    assert disk.bus_type == "NVMe"
+    assert disk.disk_type == "SSD"
+
+
+def test_wmi_reader_falls_back_to_win32_diskdrive_when_msft_physical_disk_is_missing() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_DiskDrive", None): [
+                WmiItem(Model="ST1000DM010 SATA HDD", Size=str(953 * 1024**3), InterfaceType="SCSI")
+            ],
+        }
+    )
+
+    disk = reader.read().disks[0]
+
+    assert disk.display_type == "HDD (SATA)"
+    assert disk.rated_size == "1TB"

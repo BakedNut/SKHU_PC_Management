@@ -15,12 +15,40 @@ class NetworkViewModel:
     status_message: str = "네트워크 어댑터를 불러오지 않았습니다."
     is_busy: bool = False
 
+    def default_static_ip_fields(self) -> dict[str, str]:
+        return {
+            "ip_address": "192.168.",
+            "subnet_mask": "255.255.255.0",
+            "gateway": "192.168.",
+            "dns1": "203.246.75.1",
+            "dns2": "",
+        }
+
+    def gateway_for_ip_address(self, ip_address: str) -> str | None:
+        text = ip_address.strip()
+        if not text:
+            return None
+
+        last_dot_index = text.rfind(".")
+        if last_dot_index <= 0:
+            return None
+
+        return f"{text[:last_dot_index + 1]}1"
+
     def load_adapters(self) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
         self.is_busy = True
         self.status_message = "네트워크 어댑터를 불러오는 중입니다..."
         try:
             self.adapters = self.list_network_adapters_use_case.execute()
-            self.status_message = f"어댑터 {len(self.adapters)}개를 불러왔습니다."
+            if self.adapters:
+                self.status_message = f"어댑터 {len(self.adapters)}개를 불러왔습니다."
+            else:
+                self.status_message = (
+                    "어댑터를 찾지 못했습니다. PowerShell/Get-NetAdapter 또는 netsh 조회 결과를 확인하세요."
+                )
         except Exception as exc:
             self.adapters = []
             self.status_message = f"어댑터 조회 실패: {exc}"
@@ -36,6 +64,9 @@ class NetworkViewModel:
         dns1: str,
         dns2: str,
     ) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
         self.is_busy = True
         self.status_message = "정적 IP를 적용하는 중입니다..."
         try:
@@ -55,6 +86,9 @@ class NetworkViewModel:
             self.is_busy = False
 
     def set_dhcp(self, adapter_name: str) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
         self.is_busy = True
         self.status_message = "DHCP로 전환하는 중입니다..."
         try:

@@ -19,6 +19,20 @@ class DiskInfo:
     name: str = ""
     total_gb: float | None = None
     free_gb: float | None = None
+    actual_size_gib: float | None = None
+    rated_size: str | None = None
+    bus_type: str | None = None
+    display_type: str = "Unknown"
+    serial_number: str | None = None
+    raw_size_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.actual_size_gib is None and self.size_gb is not None:
+            object.__setattr__(self, "actual_size_gib", self.size_gb)
+        if self.size_gb is None and self.actual_size_gib is not None:
+            object.__setattr__(self, "size_gb", self.actual_size_gib)
+        if self.display_type == "Unknown" and self.disk_type != "Unknown":
+            object.__setattr__(self, "display_type", self.disk_type)
 
 
 @dataclass(frozen=True)

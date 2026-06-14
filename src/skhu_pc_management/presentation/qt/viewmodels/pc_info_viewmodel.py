@@ -12,6 +12,9 @@ class PcInfoViewModel:
     is_busy: bool = False
 
     def refresh(self) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
         self.is_busy = True
         self.status_message = "PC 정보를 불러오는 중입니다..."
         try:
@@ -19,14 +22,24 @@ class PcInfoViewModel:
             self.rows = [
                 ("PC 이름", pc_info.computer_name),
                 ("사용자", pc_info.user_name),
-                ("Windows", _join_non_empty(pc_info.os_name, pc_info.windows_release, pc_info.windows_build, pc_info.windows_architecture)),
+                (
+                    "Windows",
+                    _display_text(
+                        _join_non_empty(
+                            pc_info.os_name,
+                            pc_info.windows_release,
+                            pc_info.windows_build,
+                            pc_info.windows_architecture,
+                        )
+                    ),
+                ),
                 ("CPU", pc_info.cpu_name),
                 ("RAM", _format_ram(pc_info)),
-                ("GPU", "\n".join(pc_info.gpu_names) if pc_info.gpu_names else "Unknown"),
+                ("GPU", "\n".join(pc_info.gpu_names) if pc_info.gpu_names else "알 수 없음"),
                 ("디스크", _format_disks(pc_info.disks)),
                 ("TPM", _format_tpm(pc_info)),
-                ("Secure Boot", pc_info.secure_boot_status),
-                ("Boot Mode", pc_info.boot_mode),
+                ("Secure Boot", _display_text(pc_info.secure_boot_status)),
+                ("Boot Mode", _display_text(pc_info.boot_mode)),
             ]
             self.status_message = "PC 정보를 불러왔습니다."
         except Exception as exc:
@@ -40,8 +53,18 @@ def _join_non_empty(*values: object | None) -> str:
     return " ".join(str(value) for value in values if value not in (None, ""))
 
 
+def _display_text(value: object | None) -> str:
+    if value in (None, "", "Unknown"):
+        return "알 수 없음"
+    if value == "Installed":
+        return "설치됨"
+    if value == "Not installed":
+        return "설치되지 않음"
+    return str(value)
+
+
 def _format_ram(pc_info: Any) -> str:
-    base = "Unknown" if pc_info.memory_gb is None else f"{pc_info.memory_gb:g} GB"
+    base = "알 수 없음" if pc_info.memory_gb is None else f"{pc_info.memory_gb:g} GB"
     details = []
     if pc_info.memory_type != "Unknown":
         details.append(pc_info.memory_type)
@@ -54,16 +77,23 @@ def _format_ram(pc_info: Any) -> str:
 
 def _format_disks(disks: list[Any]) -> str:
     if not disks:
-        return "Unknown"
+        return "알 수 없음"
     lines = []
     for disk in disks:
-        size = "N/A" if disk.size_gb is None else f"{disk.size_gb:g} GB"
-        lines.append(f"{disk.model} / {size} / {disk.disk_type}")
+        actual_size = getattr(disk, "actual_size_gib", None)
+        size = "N/A" if actual_size is None else f"{actual_size:g} GiB"
+        rated_size = getattr(disk, "rated_size", None)
+        type_text = getattr(disk, "display_type", None) or getattr(disk, "disk_type", "알 수 없음")
+        parts = [str(disk.model), size]
+        if rated_size:
+            parts.append(f"정격 {rated_size}")
+        parts.append(_display_text(type_text))
+        lines.append(" / ".join(parts))
     return "\n".join(lines)
 
 
 def _format_tpm(pc_info: Any) -> str:
     if pc_info.tpm_installed is None:
-        return "Unknown"
-    status = "Installed" if pc_info.tpm_installed else "Not installed"
+        return "알 수 없음"
+    status = "설치됨" if pc_info.tpm_installed else "설치되지 않음"
     return status if not pc_info.tpm_version else f"{status} ({pc_info.tpm_version})"

@@ -4,12 +4,15 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from skhu_pc_management.application.use_cases.run_pc_checks import (
+    AutoShutdownScheduleCheck,
     BrowserHistoryCheck,
     InstalledProgramCheck,
     OfficeInstallCheck,
     PowerSettingsCheck,
+    ProgramVersionCheck,
     RecycleBinCheck,
     RunPcChecks,
+    compare_versions,
 )
 from skhu_pc_management.domain.checks.models import (
     BrowserDataStatus,
@@ -19,8 +22,21 @@ from skhu_pc_management.domain.checks.models import (
     InstalledProgramInfo,
     PowerSettingsStatus,
     RecycleBinStatus,
+    ScheduledTaskInfo,
+    ac_timeout_display,
 )
+from skhu_pc_management.infrastructure.windows import installed_program_reader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import WindowsInstalledProgramReader
+from skhu_pc_management.infrastructure.windows.installed_program_reader import (
+    _extract_bandizip_version,
+    _parse_potplayer_history_version,
+)
+from skhu_pc_management.infrastructure.windows.latest_version_provider import (
+    parse_latest_bandizip_version,
+    parse_latest_chrome_version,
+    parse_latest_edge_version,
+    parse_latest_potplayer_version,
+)
 from skhu_pc_management.infrastructure.windows.power_settings_reader import WindowsPowerSettingsReader
 
 
@@ -48,6 +64,16 @@ class FakeBrowserDataReader:
         return self.statuses[browser_id]
 
 
+class FakeLatestVersionProvider:
+    def __init__(self) -> None:
+        self.versions: dict[str, str | None] = {}
+        self.reads: list[str] = []
+
+    def get_latest_version(self, program_id: str) -> str | None:
+        self.reads.append(program_id)
+        return self.versions.get(program_id)
+
+
 class FakePowerSettingsReader:
     def __init__(self, status: PowerSettingsStatus) -> None:
         self.status = status
@@ -64,6 +90,16 @@ class FakeRecycleBinReader:
 
     def read_status(self) -> RecycleBinStatus:
         return self.status
+
+
+class FakeScheduledTaskReader:
+    def __init__(self, task: ScheduledTaskInfo) -> None:
+        self.task = task
+        self.reads: list[str] = []
+
+    def get_task(self, name: str) -> ScheduledTaskInfo:
+        self.reads.append(name)
+        return self.task
 
 
 class FakeCommandRunner:
@@ -92,6 +128,11 @@ class FakeRegistry:
         raise AssertionError("PC checks must not write registry values")
 
 
+class MissingValueRegistry(FakeRegistry):
+    def read_value(self, root: str, path: str, name: str) -> object | None:
+        raise FileNotFoundError(name)
+
+
 class ExplodingCheck:
     def run(self) -> CheckResult:
         raise RuntimeError("check failed")
@@ -100,10 +141,12 @@ class ExplodingCheck:
 def test_run_pc_checks_returns_results_from_multiple_checks() -> None:
     program_reader = FakeInstalledProgramReader()
     program_reader.programs["chrome"] = InstalledProgramInfo("chrome", "Google Chrome", "1.2.3")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["chrome"] = "1.2.3"
     browser_reader = FakeBrowserDataReader()
     browser_reader.statuses["chrome"] = BrowserDataStatus("chrome", size_bytes=100, path_exists=True)
     checks = [
-        InstalledProgramCheck(program_reader, "chrome_install", "Chrome 설치/버전 확인", "chrome"),
+        ProgramVersionCheck(program_reader, latest_provider, "chrome_install", "Chrome 설치/버전 확인", "chrome", "Chrome"),
         BrowserHistoryCheck(browser_reader, "chrome_history", "Chrome 기록 확인", "chrome"),
     ]
 
@@ -140,6 +183,110 @@ def test_installed_program_check_reports_missing_as_warning() -> None:
     assert result.category == CheckCategory.PROGRAM
 
 
+def test_program_version_check_reports_missing_program() -> None:
+    result = ProgramVersionCheck(
+        FakeInstalledProgramReader(),
+        FakeLatestVersionProvider(),
+        "chrome_install",
+        "Chrome 설치/버전 확인",
+        "chrome",
+        "Chrome",
+    ).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "Chrome이 설치되지 않았습니다."
+
+
+def test_program_version_check_reports_latest_version_ok() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["chrome"] = InstalledProgramInfo("chrome", "Google Chrome", "1.2.10")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["chrome"] = "1.2.10"
+
+    result = ProgramVersionCheck(program_reader, latest_provider, "chrome_install", "Chrome 설치/버전 확인", "chrome", "Chrome").run()
+
+    assert result.status == CheckStatus.OK
+    assert result.message == "Chrome이 최신 버전입니다. 현재: 1.2.10 / 최신: 1.2.10"
+
+
+def test_program_version_check_reports_update_needed() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["edge"] = InstalledProgramInfo("edge", "Microsoft Edge", "1.2.9")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["edge"] = "1.2.10"
+
+    result = ProgramVersionCheck(program_reader, latest_provider, "edge_install", "Edge 설치/버전 확인", "edge", "Edge").run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "Edge 업데이트가 필요합니다. 현재: 1.2.9 / 최신: 1.2.10"
+
+
+def test_program_version_check_reports_latest_lookup_failure() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["chrome"] = InstalledProgramInfo("chrome", "Google Chrome", "120.0.1")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["chrome"] = None
+
+    result = ProgramVersionCheck(program_reader, latest_provider, "chrome_install", "Chrome 설치/버전 확인", "chrome", "Chrome").run()
+
+    assert result.status == CheckStatus.UNKNOWN
+    assert result.message == "Chrome 최신 버전을 확인할 수 없습니다. 현재: 120.0.1 / 최신: 미확인"
+
+
+def test_program_version_check_reports_local_version_failure() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["bandizip"] = InstalledProgramInfo("bandizip", "Bandizip", "0.0")
+
+    result = ProgramVersionCheck(
+        program_reader,
+        FakeLatestVersionProvider(),
+        "bandizip_install",
+        "Bandizip 설치/버전 확인",
+        "bandizip",
+        "Bandizip",
+    ).run()
+
+    assert result.status == CheckStatus.UNKNOWN
+    assert result.message == "로컬 버전을 확인할 수 없습니다."
+
+
+def test_compare_versions_uses_numeric_parts() -> None:
+    assert compare_versions("1.2.10", "1.2.9") == 1
+    assert compare_versions("1.2.9", "1.2.10") == -1
+    assert compare_versions("1.2", "1.2.0") == 0
+
+
+def test_program_version_check_compares_potplayer_date_versions() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["potplayer"] = InstalledProgramInfo("potplayer", "PotPlayer", "250101")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["potplayer"] = "250100"
+
+    result = ProgramVersionCheck(
+        program_reader,
+        latest_provider,
+        "potplayer_install",
+        "PotPlayer 설치/버전 확인",
+        "potplayer",
+        "PotPlayer",
+    ).run()
+
+    assert result.status == CheckStatus.OK
+    assert result.message == "PotPlayer이 최신 버전입니다. 현재: 250101 / 최신: 250100"
+
+
+def test_latest_version_provider_parsers_do_not_require_network() -> None:
+    assert parse_latest_chrome_version('[{"version":"126.0.1"}]') == "126.0.1"
+    assert parse_latest_edge_version('[{"Product":"Stable","Releases":[{"ProductVersion":"126.0.2"}]}]') == "126.0.2"
+    assert parse_latest_potplayer_version("release [250101]") == "250101"
+    assert parse_latest_bandizip_version("<a>v7.36</a>") == "7.36"
+
+
+def test_local_version_parsers_for_potplayer_and_bandizip() -> None:
+    assert _parse_potplayer_history_version("변경 사항 [250101]") == "250101"
+    assert _extract_bandizip_version("7.36.0.1") == "7.36"
+
+
 def test_office_check_reports_recommended_version_ok() -> None:
     reader = FakeInstalledProgramReader()
     reader.office_name = "Microsoft Office LTSC Professional Plus 2024"
@@ -162,7 +309,107 @@ def test_power_settings_check_reports_warning_when_timeout_is_enabled() -> None:
     result = PowerSettingsCheck(reader).run()
 
     assert result.status == CheckStatus.WARNING
+    assert result.message == "전원 옵션 확인이 필요합니다. 화면 끄기: 안 함, 절전: 5분, 최대 절전: 안 함"
+    assert result.detail == "화면 끄기: 안 함, 절전: 5분, 최대 절전: 안 함"
     assert reader.read_count == 1
+
+
+def test_powercfg_timeout_display_converts_zero_to_never() -> None:
+    assert ac_timeout_display("0x00000000") == "안 함"
+
+
+def test_powercfg_timeout_display_converts_seconds_to_minutes() -> None:
+    assert ac_timeout_display("0x00000258") == "10분"
+
+
+def test_power_settings_check_reports_ok_when_all_values_are_zero() -> None:
+    reader = FakePowerSettingsReader(
+        PowerSettingsStatus(
+            monitor_timeout_ac="0x00000000",
+            standby_timeout_ac="0x00000000",
+            hibernate_timeout_ac="0x00000000",
+        )
+    )
+
+    result = PowerSettingsCheck(reader).run()
+
+    assert result.status == CheckStatus.OK
+    assert result.message == "전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함, 절전: 안 함, 최대 절전: 안 함"
+
+
+def test_power_settings_check_reports_unknown_when_value_is_missing_or_invalid() -> None:
+    reader = FakePowerSettingsReader(
+        PowerSettingsStatus(
+            monitor_timeout_ac="0x00000000",
+            standby_timeout_ac=None,
+            hibernate_timeout_ac="not-a-hex-value",
+        )
+    )
+
+    result = PowerSettingsCheck(reader).run()
+
+    assert result.status == CheckStatus.UNKNOWN
+    assert result.message == "전원 옵션 상태를 확인할 수 없습니다."
+
+
+def test_auto_shutdown_schedule_check_reports_ok_for_matching_task() -> None:
+    task = ScheduledTaskInfo(
+        name="23시 자동 종료",
+        exists=True,
+        trigger_time="22:55",
+        executable=r"C:\Windows\System32\shutdown.exe",
+        arguments='-s -t 300 -c "원치 않는 경우 바탕화면의 종료 취소를 실행해주세요"',
+    )
+    reader = FakeScheduledTaskReader(task)
+
+    result = AutoShutdownScheduleCheck(reader).run()
+
+    assert result.status == CheckStatus.OK
+    assert result.message == "23시 자동종료 스케줄이 정상 등록되어 있습니다."
+    assert reader.reads == ["23시 자동 종료"]
+
+
+def test_auto_shutdown_schedule_check_reports_warning_when_task_is_missing() -> None:
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(ScheduledTaskInfo("23시 자동 종료", exists=False))).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "23시 자동종료 스케줄이 등록되어 있지 않습니다."
+
+
+def test_auto_shutdown_schedule_check_reports_warning_for_wrong_trigger_time() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="23:00", executable="shutdown.exe", arguments="-s -t 300")
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task)).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert "시간=23:00" in (result.detail or "")
+
+
+def test_auto_shutdown_schedule_check_reports_warning_for_wrong_executable() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable="notepad.exe", arguments="-s -t 300")
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task)).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert "명령=notepad.exe" in (result.detail or "")
+
+
+def test_auto_shutdown_schedule_check_reports_warning_for_missing_shutdown_arguments() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable="shutdown.exe", arguments="-t 300")
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task)).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert "옵션=-s 없음" in (result.detail or "")
+
+
+def test_auto_shutdown_schedule_check_reports_unknown_when_reader_fails() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=False, error="PowerShell failed")
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task)).run()
+
+    assert result.status == CheckStatus.UNKNOWN
+    assert result.message == "자동종료 스케줄 상태를 확인할 수 없습니다."
 
 
 def test_recycle_bin_check_reports_non_empty_warning() -> None:
@@ -179,7 +426,18 @@ def test_browser_history_check_reports_history_warning() -> None:
     result = BrowserHistoryCheck(reader, "edge_history", "Edge 기록 확인", "edge").run()
 
     assert result.status == CheckStatus.WARNING
+    assert result.message == "브라우저 사용 기록이 존재합니다."
     assert reader.reads == ["edge"]
+
+
+def test_browser_history_check_reports_missing_user_data_as_ok() -> None:
+    reader = FakeBrowserDataReader()
+    reader.statuses["chrome"] = BrowserDataStatus("chrome", size_bytes=0, path_exists=False)
+
+    result = BrowserHistoryCheck(reader, "chrome_history", "Chrome 기록 확인", "chrome").run()
+
+    assert result.status == CheckStatus.OK
+    assert result.message == "사용자 데이터 폴더를 찾지 못해 기록 없음으로 처리했습니다."
 
 
 def test_power_settings_reader_builds_powercfg_commands() -> None:
@@ -195,6 +453,29 @@ def test_power_settings_reader_builds_powercfg_commands() -> None:
         ("powercfg", "/q", "SCHEME_CURRENT", "SUB_SLEEP", "STANDBYIDLE"),
         ("powercfg", "/q", "SCHEME_CURRENT", "SUB_SLEEP", "HIBERNATEIDLE"),
     ]
+
+
+def test_power_settings_reader_parses_korean_powercfg_prefix() -> None:
+    output = "현재 AC 전원 설정 색인: 0x00000258"
+    command_runner = FakeCommandRunner(output)
+    reader = WindowsPowerSettingsReader(command_runner)
+
+    status = reader.read_status()
+
+    assert status.monitor_timeout_ac == "0x00000258"
+    assert status.standby_timeout_ac == "0x00000258"
+    assert status.hibernate_timeout_ac == "0x00000258"
+    assert status.detail_text == "화면 끄기: 10분, 절전: 10분, 최대 절전: 10분"
+
+
+def test_power_settings_reader_returns_unknown_when_output_cannot_be_parsed() -> None:
+    command_runner = FakeCommandRunner("no power setting index")
+    reader = WindowsPowerSettingsReader(command_runner)
+
+    status = reader.read_status()
+
+    assert status.monitor_timeout_ac is None
+    assert PowerSettingsCheck(FakePowerSettingsReader(status)).run().status == CheckStatus.UNKNOWN
 
 
 def test_installed_program_reader_uses_registry_port_for_office() -> None:
@@ -220,3 +501,28 @@ def test_installed_program_reader_uses_registry_path_for_potplayer(tmp_path: Pat
 
     assert program is not None
     assert program.path == str(exe)
+
+
+def test_installed_program_reader_treats_missing_program_registry_keys_as_not_installed(monkeypatch) -> None:
+    monkeypatch.setitem(installed_program_reader._PROGRAM_PATHS, "potplayer", ())
+    reader = WindowsInstalledProgramReader(MissingValueRegistry())
+
+    assert reader.get_program("potplayer") is None
+
+
+def test_installed_program_reader_skips_unreadable_office_display_names() -> None:
+    class PartiallyFailingRegistry(FakeRegistry):
+        def read_value(self, root: str, path: str, name: str) -> object | None:
+            if path.endswith(r"\bad"):
+                raise OSError("missing DisplayName")
+            return self.values.get((root, path, name))
+
+    registry = PartiallyFailingRegistry()
+    uninstall_root = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    registry.subkeys[("HKEY_LOCAL_MACHINE", uninstall_root)] = ["bad", "office"]
+    registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\office", "DisplayName")] = (
+        "Microsoft Office LTSC Professional Plus 2024"
+    )
+    reader = WindowsInstalledProgramReader(registry)
+
+    assert reader.get_installed_office_name() == "Microsoft Office LTSC Professional Plus 2024"

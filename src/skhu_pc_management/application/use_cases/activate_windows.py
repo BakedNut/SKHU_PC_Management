@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from skhu_pc_management.application.safety import SafetyGuard
 from skhu_pc_management.domain.activation.models import ActivationResult
 from skhu_pc_management.ports.clipboard import Clipboard
 from skhu_pc_management.ports.process_launcher import ProcessLauncher
@@ -14,15 +15,21 @@ class ActivateWindows:
     product_key_provider: ProductKeyProvider
     clipboard: Clipboard
     process_launcher: ProcessLauncher
+    safety_guard: SafetyGuard = SafetyGuard()
 
     def execute(self, edition: str | None = None) -> ActivationResult:
+        display_edition = _display_windows_edition(edition)
+        blocked_message = self.safety_guard.blocked_message("windows_activation")
+        if blocked_message is not None:
+            return _failure("windows_activation", blocked_message)
+
         try:
             product_key = self.product_key_provider.get_windows_product_key(edition)
         except Exception as exc:
-            return _failure("windows_activation", f"Windows product key could not be loaded: {exc}", str(exc))
+            return _failure("windows_activation", f"Windows 제품키를 불러올 수 없습니다: {exc}", str(exc))
 
         if not product_key:
-            return _failure("windows_activation", "Windows product key is not configured.")
+            return _failure("windows_activation", "Windows 제품키가 설정되어 있지 않습니다.")
 
         try:
             self.clipboard.set_text(product_key)
@@ -31,7 +38,7 @@ class ActivateWindows:
             return ActivationResult(
                 success=False,
                 action="windows_activation",
-                message=f"Windows activation preparation failed: {exc}",
+                message=f"Windows 인증 준비 실패: {exc}",
                 launched_process="slui.exe",
                 copied_to_clipboard=True,
                 error=str(exc),
@@ -40,7 +47,7 @@ class ActivateWindows:
         return ActivationResult(
             success=True,
             action="windows_activation",
-            message="Windows product key copied and activation window launched.",
+            message=f"{display_edition} 제품키를 클립보드에 복사하고 인증 창을 실행했습니다.",
             launched_process="slui.exe",
             copied_to_clipboard=True,
         )
@@ -48,6 +55,13 @@ class ActivateWindows:
 
 def _failure(action: str, message: str, error: str | None = None) -> ActivationResult:
     return ActivationResult(success=False, action=action, message=message, error=error)
+
+
+def _display_windows_edition(edition: str | None) -> str:
+    normalized = (edition or "").replace("_", " ").replace("-", " ").strip().lower()
+    if "10" in normalized:
+        return "Windows 10"
+    return "Windows 11"
 
 
 ActivateWindowsUseCase = ActivateWindows

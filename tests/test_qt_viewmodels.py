@@ -24,8 +24,24 @@ class FakeLoadPcInfo:
         )
 
 
+class FakeUnknownPcInfo:
+    def execute(self) -> PcInfo:
+        return PcInfo(
+            computer_name="PC01",
+            user_name="student",
+            os_name="",
+            cpu_name="Unknown",
+            secure_boot_status="Unknown",
+            boot_mode="Unknown",
+        )
+
+
 class FakeCheckSettingsStatus:
+    def __init__(self) -> None:
+        self.requests: list[list[str]] = []
+
     def execute(self, setting_ids: list[str]) -> list[SettingStatus]:
+        self.requests.append(setting_ids)
         return [
             SettingStatus(
                 setting_id=setting_ids[0],
@@ -38,7 +54,11 @@ class FakeCheckSettingsStatus:
 
 
 class FakeApplySettings:
+    def __init__(self) -> None:
+        self.requests: list[list[str]] = []
+
     def execute(self, setting_ids: list[str]) -> ApplySettingsResult:
+        self.requests.append(setting_ids)
         return ApplySettingsResult(
             [ApplyResult(setting_id=setting_ids[0], name="설정", success=True, status="applied", message="ok")]
         )
@@ -61,14 +81,16 @@ class FakeSetDhcp:
 
 class FakeRunPcChecks:
     def execute(self) -> list[CheckResult]:
-        return [CheckResult(check_id="check", label="점검", status=CheckStatus.OK, message="ok")]
+        return [CheckResult(check_id="check", label="점검", status=CheckStatus.OK, message="Installed.")]
 
 
 class FakeActivation:
     def __init__(self, action: str) -> None:
         self.action = action
+        self.requests: list[str | None] = []
 
-    def execute(self) -> ActivationResult:
+    def execute(self, version: str | None = None) -> ActivationResult:
+        self.requests.append(version)
         return ActivationResult(True, self.action, "prepared", "process", True)
 
 
@@ -82,13 +104,51 @@ def test_pc_info_viewmodel_refresh_updates_rows() -> None:
 
 
 def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
-    view_model = SettingsViewModel(FakeCheckSettingsStatus(), FakeApplySettings())
+    check_status = FakeCheckSettingsStatus()
+    apply_settings = FakeApplySettings()
+    view_model = SettingsViewModel(check_status, apply_settings)
 
     view_model.check_status(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "configured", "0")]
+    assert view_model.result_rows == [("설정", "설정됨", "0")]
+    assert check_status.requests == [["hide_frequent_folders"]]
 
     view_model.apply_selected(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "applied", "ok")]
+    assert view_model.result_rows == [("설정", "적용됨", "ok")]
+    assert apply_settings.requests == [["hide_frequent_folders"]]
+
+
+def test_settings_viewmodel_exposes_all_setting_ids_for_status_check() -> None:
+    view_model = SettingsViewModel(FakeCheckSettingsStatus(), FakeApplySettings())
+
+    setting_ids = view_model.all_setting_ids()
+
+    assert "hide_frequent_folders" in setting_ids
+    assert len(setting_ids) == len(view_model.definitions)
+
+
+def test_settings_viewmodel_rejects_apply_without_selection() -> None:
+    apply_settings = FakeApplySettings()
+    view_model = SettingsViewModel(FakeCheckSettingsStatus(), apply_settings)
+
+    view_model.apply_selected([])
+
+    assert view_model.status_message == "적용할 설정을 선택하세요."
+    assert view_model.result_rows == []
+    assert apply_settings.requests == []
+
+
+def test_viewmodels_skip_work_when_busy() -> None:
+    check_status = FakeCheckSettingsStatus()
+    apply_settings = FakeApplySettings()
+    settings_view_model = SettingsViewModel(check_status, apply_settings)
+    settings_view_model.is_busy = True
+
+    settings_view_model.check_status(["hide_frequent_folders"])
+    settings_view_model.apply_selected(["hide_frequent_folders"])
+
+    assert settings_view_model.status_message == "다른 작업이 진행 중입니다."
+    assert check_status.requests == []
+    assert apply_settings.requests == []
 
 
 def test_network_viewmodel_calls_use_cases() -> None:
@@ -104,19 +164,112 @@ def test_network_viewmodel_calls_use_cases() -> None:
     assert view_model.status_message == "dhcp"
 
 
+def test_network_viewmodel_provides_legacy_default_ip_fields() -> None:
+    view_model = NetworkViewModel(FakeListAdapters(), FakeApplyStaticIp(), FakeSetDhcp())
+
+    assert view_model.default_static_ip_fields() == {
+        "ip_address": "192.168.",
+        "subnet_mask": "255.255.255.0",
+        "gateway": "192.168.",
+        "dns1": "203.246.75.1",
+        "dns2": "",
+    }
+
+
+def test_network_viewmodel_updates_gateway_from_ip_prefix() -> None:
+    view_model = NetworkViewModel(FakeListAdapters(), FakeApplyStaticIp(), FakeSetDhcp())
+
+    assert view_model.gateway_for_ip_address("10.20.30.40") == "10.20.30.1"
+    assert view_model.gateway_for_ip_address("192.168.") == "192.168.1"
+    assert view_model.gateway_for_ip_address("") is None
+    assert view_model.gateway_for_ip_address("localhost") is None
+
+
+def test_pc_info_viewmodel_translates_unknown_values() -> None:
+    view_model = PcInfoViewModel(FakeUnknownPcInfo())
+
+    view_model.refresh()
+
+    assert ("Windows", "알 수 없음") in view_model.rows
+    assert ("GPU", "알 수 없음") in view_model.rows
+    assert ("TPM", "알 수 없음") in view_model.rows
+
+
 def test_pc_check_viewmodel_updates_rows() -> None:
     view_model = PcCheckViewModel(FakeRunPcChecks())
 
     view_model.run_checks()
 
-    assert view_model.result_rows == [("점검", "ok", "ok")]
+    assert view_model.result_rows == [("점검", "정상", "설치됨")]
+
+
+def test_pc_check_viewmodel_translates_common_messages() -> None:
+    class FakeRunTranslatedChecks:
+        def execute(self) -> list[CheckResult]:
+            return [
+                CheckResult(
+                    check_id="office",
+                    label="Office",
+                    status=CheckStatus.WARNING,
+                    message="Office 2021 or 2024 is not installed.",
+                ),
+                CheckResult(
+                    check_id="power",
+                    label="전원",
+                    status=CheckStatus.UNKNOWN,
+                    message="Power settings could not be read.",
+                ),
+            ]
+
+    view_model = PcCheckViewModel(FakeRunTranslatedChecks())
+
+    view_model.run_checks()
+
+    assert view_model.result_rows == [
+        ("Office", "주의", "Office 2021 또는 2024가 설치되어 있지 않음"),
+        ("전원", "알 수 없음", "전원 설정을 읽을 수 없음"),
+    ]
 
 
 def test_activation_viewmodel_does_not_expose_product_key() -> None:
+    windows = FakeActivation("windows_activation")
+    office = FakeActivation("office_activation")
+    view_model = ActivationViewModel(windows, office)
+
+    view_model.prepare_windows_activation("windows_10")
+    assert view_model.status_message == "prepared"
+    assert windows.requests == ["windows_10"]
+
+    view_model.prepare_office_activation("2021")
+    assert view_model.status_message == "prepared"
+    assert office.requests == ["2021"]
+
+
+def test_activation_viewmodel_applies_recommended_office_version() -> None:
     view_model = ActivationViewModel(FakeActivation("windows_activation"), FakeActivation("office_activation"))
 
+    view_model.apply_recommended_office_version("2021")
+
+    assert view_model.recommended_office_version == "2021"
+    assert view_model.selected_office_version == "2021"
+
+
+def test_activation_viewmodel_translates_product_key_messages() -> None:
+    class FakeKoreanActivation:
+        def __init__(self, message: str, success: bool = True) -> None:
+            self.message = message
+            self.success = success
+
+        def execute(self, version: str | None = None) -> ActivationResult:
+            return ActivationResult(self.success, "activation", self.message, copied_to_clipboard=True)
+
+    view_model = ActivationViewModel(
+        FakeKoreanActivation("Windows product key copied and activation window launched."),
+        FakeKoreanActivation("Office product key is not configured.", success=False),
+    )
+
     view_model.prepare_windows_activation()
-    assert view_model.status_message == "prepared"
+    assert view_model.status_message == "Windows 제품키를 클립보드에 복사하고 인증 창을 열었습니다."
 
     view_model.prepare_office_activation()
-    assert view_model.status_message == "prepared"
+    assert view_model.status_message == "Office 인증 준비 실패: Office 제품키가 설정되어 있지 않습니다."

@@ -19,9 +19,14 @@ _VALUE_TYPES = {
 
 class WinregRegistry:
     def read_value(self, root: str, path: str, name: str) -> object | None:
-        with winreg.OpenKey(_resolve_root(root), path) as key:
-            value, _ = winreg.QueryValueEx(key, name)
-            return value
+        try:
+            with winreg.OpenKey(_resolve_root(root), path) as key:
+                value, _ = winreg.QueryValueEx(key, name)
+                return value
+        except PermissionError:
+            raise
+        except (FileNotFoundError, OSError):
+            return None
 
     def list_subkeys(self, root: str, path: str) -> list[str]:
         with winreg.OpenKey(_resolve_root(root), path) as key:

@@ -11,6 +11,7 @@ from skhu_pc_management.domain.settings.definitions import (
     SettingDefinition,
 )
 from skhu_pc_management.domain.settings.models import ApplyResult, ApplySettingsResult
+from skhu_pc_management.application.safety import SafetyGuard
 from skhu_pc_management.ports.command_runner import CommandRunner
 from skhu_pc_management.ports.registry import Registry
 
@@ -19,11 +20,30 @@ from skhu_pc_management.ports.registry import Registry
 class ApplySettings:
     registry: Registry
     command_runner: CommandRunner
+    safety_guard: SafetyGuard = field(default_factory=SafetyGuard)
     definitions_by_id: dict[str, SettingDefinition] = field(
         default_factory=lambda: dict(DEFAULT_SETTING_DEFINITIONS_BY_ID)
     )
 
     def execute(self, setting_ids: Iterable[str]) -> ApplySettingsResult:
+        setting_ids = list(setting_ids)
+        blocked_message = self.safety_guard.blocked_message("apply_settings")
+        if blocked_message is not None:
+            return ApplySettingsResult(
+                results=[
+                    ApplyResult(
+                        setting_id=setting_id,
+                        name=self.definitions_by_id.get(setting_id, setting_id).name
+                        if setting_id in self.definitions_by_id
+                        else setting_id,
+                        success=False,
+                        status="skipped",
+                        message=blocked_message,
+                    )
+                    for setting_id in setting_ids
+                ]
+            )
+
         results: list[ApplyResult] = []
         should_update_user_parameters = False
         should_restart_explorer = False

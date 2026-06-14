@@ -28,22 +28,28 @@ def _candidate_resource_roots() -> list[Path]:
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         base = Path(meipass)
-        candidates.append(base / "resources")
+        candidates.extend(_resource_dir_candidates(base))
         candidates.append(base)
 
     if getattr(sys, "frozen", False):
         executable_dir = Path(sys.executable).resolve().parent
-        candidates.append(executable_dir / "resources")
-        candidates.append(executable_dir / "_internal" / "resources")
+        candidates.extend(_resource_dir_candidates(executable_dir))
+        candidates.extend(_resource_dir_candidates(executable_dir / "_internal"))
 
     current = Path.cwd().resolve()
-    candidates.append(current / "resources")
-    candidates.extend(parent / "resources" for parent in current.parents)
+    candidates.extend(_resource_dir_candidates(current))
+    for parent in current.parents:
+        candidates.extend(_resource_dir_candidates(parent))
 
     module_path = Path(__file__).resolve()
-    candidates.extend(parent / "resources" for parent in module_path.parents)
+    for parent in module_path.parents:
+        candidates.extend(_resource_dir_candidates(parent))
 
     return _deduplicate(candidates)
+
+
+def _resource_dir_candidates(base: Path) -> list[Path]:
+    return [base / "resources", base / "Resources"]
 
 
 def _deduplicate(paths: list[Path]) -> list[Path]:

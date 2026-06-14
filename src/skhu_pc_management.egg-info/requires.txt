@@ -1,5 +1,0 @@
-PySide6
-pyinstaller
-pytest
-pywin32
-WMI

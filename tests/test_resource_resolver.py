@@ -23,6 +23,21 @@ def test_resolver_finds_development_resources_from_current_directory(tmp_path: P
     assert resolver.resolve("TaskBar.reg") == expected
 
 
+def test_resolver_finds_uppercase_resources_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    resources = tmp_path / "Resources"
+    resources.mkdir()
+    expected = resources / "TaskBar.reg"
+    expected.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+
+    resolver = PyInstallerResourceResolver()
+
+    assert resolver.resources_root() == resources
+    assert resolver.resolve("TaskBar.reg") == expected
+
+
 def test_resolver_finds_pyinstaller_meipass_resources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     meipass = tmp_path / "_MEI"
     resources = meipass / "resources"

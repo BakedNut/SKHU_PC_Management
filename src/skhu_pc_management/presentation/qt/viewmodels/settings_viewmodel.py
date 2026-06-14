@@ -10,18 +10,26 @@ from skhu_pc_management.domain.settings.definitions import DEFAULT_SETTING_DEFIN
 class SettingsViewModel:
     check_settings_status_use_case: Any
     apply_settings_use_case: Any
+    validate_taskbar_resources_use_case: Any | None = None
+    apply_taskbar_layout_use_case: Any | None = None
     definitions: tuple[SettingDefinition, ...] = DEFAULT_SETTING_DEFINITIONS
     status_message: str = "설정 상태를 확인하지 않았습니다."
     result_rows: list[tuple[str, str, str]] = field(default_factory=list)
     is_busy: bool = False
 
+    def all_setting_ids(self) -> list[str]:
+        return [definition.setting_id for definition in self.definitions]
+
     def check_status(self, setting_ids: list[str]) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
         self.is_busy = True
         self.status_message = "설정 상태 확인 중입니다..."
         try:
             statuses = self.check_settings_status_use_case.execute(setting_ids)
             self.result_rows = [
-                (status.label or status.name, status.status_text, _format_value(status.actual_value))
+                (status.label or status.name, _display_status(status.status_text), _format_value(status.actual_value))
                 for status in statuses
             ]
             self.status_message = "설정 상태 확인이 완료되었습니다."
@@ -32,12 +40,20 @@ class SettingsViewModel:
             self.is_busy = False
 
     def apply_selected(self, setting_ids: list[str]) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
+        if not setting_ids:
+            self.result_rows = []
+            self.status_message = "적용할 설정을 선택하세요."
+            return
+
         self.is_busy = True
         self.status_message = "선택한 설정을 적용하는 중입니다..."
         try:
             result = self.apply_settings_use_case.execute(setting_ids)
             self.result_rows = [
-                (item.name, item.status, item.message)
+                (item.name, _display_status(item.status), _display_message(item.message))
                 for item in result.results
             ]
             self.status_message = (
@@ -49,6 +65,48 @@ class SettingsViewModel:
         finally:
             self.is_busy = False
 
+    def validate_taskbar_resources(self) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
+        if self.validate_taskbar_resources_use_case is None:
+            self.status_message = "작업표시줄 리소스 확인 기능이 구성되지 않았습니다."
+            return
+
+        self.is_busy = True
+        self.status_message = "작업표시줄 리소스를 확인하는 중입니다..."
+        try:
+            result = self.validate_taskbar_resources_use_case.execute()
+            self.result_rows = _taskbar_validation_rows(result)
+            self.status_message = result.message
+        except Exception as exc:
+            self.result_rows = []
+            self.status_message = f"작업표시줄 리소스 확인 실패: {exc}"
+        finally:
+            self.is_busy = False
+
+    def apply_taskbar_layout(self, dry_run: bool = True) -> None:
+        if self.is_busy:
+            self.status_message = "다른 작업이 진행 중입니다."
+            return
+        if self.apply_taskbar_layout_use_case is None:
+            self.status_message = "작업표시줄 설정 적용 기능이 구성되지 않았습니다."
+            return
+
+        self.is_busy = True
+        self.status_message = "작업표시줄 설정 적용 계획을 확인하는 중입니다..."
+        try:
+            result = self.apply_taskbar_layout_use_case.execute(dry_run=dry_run)
+            self.result_rows = [(action, "예정", "") for action in result.planned_actions]
+            if result.reg_file is not None:
+                self.result_rows.append(("TaskBar.reg", "확인", str(result.reg_file)))
+            self.status_message = result.message
+        except Exception as exc:
+            self.result_rows = []
+            self.status_message = f"작업표시줄 설정 확인 실패: {exc}"
+        finally:
+            self.is_busy = False
+
 
 def _format_value(value: object | None) -> str:
     if value is None:
@@ -56,3 +114,36 @@ def _format_value(value: object | None) -> str:
     if isinstance(value, tuple):
         return ", ".join(str(item) for item in value)
     return str(value)
+
+
+_STATUS_LABELS = {
+    "configured": "설정됨",
+    "missing": "값 없음",
+    "not_configured": "미설정",
+    "applied": "적용됨",
+    "failed": "실패",
+    "skipped": "건너뜀",
+    "Unknown": "알 수 없음",
+}
+
+_MESSAGE_LABELS = {
+    "Applied.": "적용됨",
+}
+
+
+def _display_status(status: str) -> str:
+    return _STATUS_LABELS.get(status, status)
+
+
+def _display_message(message: str) -> str:
+    return _MESSAGE_LABELS.get(message, message)
+
+
+def _taskbar_validation_rows(result: Any) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    rows.append(("Resources", "확인" if result.resources_root else "없음", "" if result.resources_root is None else str(result.resources_root)))
+    rows.append(("TaskBar.reg", "확인" if result.reg_file and result.reg_file.exists() else "없음", "" if result.reg_file is None else str(result.reg_file)))
+    rows.append(("TaskBar 바로가기", f"{len(result.shortcut_files)}개", ", ".join(path.name for path in result.shortcut_files)))
+    for warning in result.warnings:
+        rows.append(("경고", "주의", warning))
+    return rows

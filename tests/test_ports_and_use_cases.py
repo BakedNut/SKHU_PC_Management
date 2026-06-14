@@ -2,6 +2,7 @@ from skhu_pc_management.application.use_cases.activate_windows import ActivateWi
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo
 from skhu_pc_management.domain.pc.models import PcInfo
 from skhu_pc_management.infrastructure.license.null_product_key_provider import NullProductKeyProvider
+from skhu_pc_management.ports.admin_privilege_checker import AdminPrivilegeChecker
 from skhu_pc_management.ports.product_key_provider import ProductKeyProvider
 
 
@@ -37,6 +38,10 @@ class FakeProcessLauncher:
 def test_product_key_provider_protocol_exists() -> None:
     assert hasattr(ProductKeyProvider, "get_windows_product_key")
     assert hasattr(ProductKeyProvider, "get_office_product_key")
+
+
+def test_admin_privilege_checker_protocol_exists() -> None:
+    assert hasattr(AdminPrivilegeChecker, "is_running_as_admin")
 
 
 def test_fake_port_can_create_use_case() -> None:

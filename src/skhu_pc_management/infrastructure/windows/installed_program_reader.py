@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from skhu_pc_management.domain.checks.models import InstalledProgramInfo
 from skhu_pc_management.ports.registry import Registry
@@ -23,7 +24,7 @@ class WindowsInstalledProgramReader:
                 return InstalledProgramInfo(
                     program_id=program_id,
                     name=_PROGRAM_NAMES.get(program_id, program_id),
-                    version=_get_file_version(path),
+                    version=_get_program_version(program_id, path),
                     path=str(path),
                 )
         return None
@@ -40,11 +41,14 @@ class WindowsInstalledProgramReader:
                 continue
 
             for subkey in subkeys:
-                display_name = self.registry.read_value(
-                    "HKEY_LOCAL_MACHINE",
-                    rf"{root_path}\{subkey}",
-                    "DisplayName",
-                )
+                try:
+                    display_name = self.registry.read_value(
+                        "HKEY_LOCAL_MACHINE",
+                        rf"{root_path}\{subkey}",
+                        "DisplayName",
+                    )
+                except (FileNotFoundError, OSError):
+                    continue
                 if not isinstance(display_name, str):
                     continue
                 if _is_office_display_name(display_name):
@@ -54,7 +58,10 @@ class WindowsInstalledProgramReader:
     def _get_program_registry_path(self, program_id: str) -> str | None:
         if program_id == "potplayer":
             for key_path in (r"SOFTWARE\DAUM\PotPlayer64", r"SOFTWARE\DAUM\PotPlayer"):
-                value = self.registry.read_value("HKEY_LOCAL_MACHINE", key_path, "ProgramPath")
+                try:
+                    value = self.registry.read_value("HKEY_LOCAL_MACHINE", key_path, "ProgramPath")
+                except (FileNotFoundError, OSError):
+                    continue
                 if isinstance(value, str):
                     return value
 
@@ -63,7 +70,10 @@ class WindowsInstalledProgramReader:
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Bandizip",
                 r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Bandizip",
             ):
-                value = self.registry.read_value("HKEY_LOCAL_MACHINE", key_path, "InstallLocation")
+                try:
+                    value = self.registry.read_value("HKEY_LOCAL_MACHINE", key_path, "InstallLocation")
+                except (FileNotFoundError, OSError):
+                    continue
                 if isinstance(value, str):
                     return str(Path(value) / "Bandizip.exe")
         return None
@@ -117,3 +127,47 @@ def _get_file_version(path: Path) -> str | None:
         return ".".join(str(part) for part in (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF))
     except Exception:
         return None
+
+
+def _get_program_version(program_id: str, path: Path) -> str | None:
+    if program_id == "potplayer":
+        history_version = _get_potplayer_history_version(path)
+        if history_version:
+            return history_version
+        file_version = _get_file_version(path)
+        return _extract_potplayer_date_version(file_version)
+
+    if program_id == "bandizip":
+        file_version = _get_file_version(path)
+        return _extract_bandizip_version(file_version)
+
+    return _get_file_version(path)
+
+
+def _get_potplayer_history_version(path: Path) -> str | None:
+    history_path = path.parent / "History" / "Korean.txt"
+    try:
+        content = history_path.read_text(encoding="mbcs")
+    except Exception:
+        return None
+    return _parse_potplayer_history_version(content)
+
+
+def _parse_potplayer_history_version(content: str) -> str | None:
+    match = re.search(r"\[(\d{6})\]", content)
+    return match.group(1) if match else None
+
+
+def _extract_potplayer_date_version(version: str | None) -> str | None:
+    if not version:
+        return None
+    compact = version.replace(".", "").replace(",", "").replace(" ", "")
+    match = re.search(r"(\d{6})", compact)
+    return match.group(1) if match else None
+
+
+def _extract_bandizip_version(version: str | None) -> str | None:
+    if not version:
+        return None
+    match = re.search(r"\d+\.\d+", version)
+    return match.group(0) if match else None

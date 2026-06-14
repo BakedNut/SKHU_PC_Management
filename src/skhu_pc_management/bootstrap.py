@@ -1,33 +1,45 @@
 from __future__ import annotations
 
+import os
+
+from skhu_pc_management.application.safety import SafetyGuard
 from skhu_pc_management.application.use_cases.activate_office import ActivateOffice
 from skhu_pc_management.application.use_cases.activate_windows import ActivateWindows
 from skhu_pc_management.application.use_cases.apply_settings import ApplySettings
 from skhu_pc_management.application.use_cases.apply_static_ip import ApplyStaticIp
+from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
 from skhu_pc_management.application.use_cases.check_settings_status import CheckSettingsStatus
 from skhu_pc_management.application.use_cases.list_network_adapters import ListNetworkAdapters
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo
 from skhu_pc_management.application.use_cases.run_pc_checks import (
+    AutoShutdownScheduleCheck,
     BrowserHistoryCheck,
-    InstalledProgramCheck,
     OfficeInstallCheck,
     PowerSettingsCheck,
+    ProgramVersionCheck,
     RecycleBinCheck,
     RunPcChecks,
 )
 from skhu_pc_management.application.use_cases.set_dhcp import SetDhcp
+from skhu_pc_management.application.use_cases.validate_taskbar_resources import ValidateTaskbarResources
 from skhu_pc_management.infrastructure.license.embedded_product_key_provider import EmbeddedProductKeyProvider
 from skhu_pc_management.infrastructure.windows.browser_data_reader import WindowsBrowserDataReader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import WindowsInstalledProgramReader
+from skhu_pc_management.infrastructure.windows.latest_version_provider import WindowsLatestVersionProvider
 from skhu_pc_management.infrastructure.windows.netsh_network_configurator import NetshNetworkConfigurator
 from skhu_pc_management.infrastructure.windows.power_settings_reader import WindowsPowerSettingsReader
+from skhu_pc_management.infrastructure.windows.pyinstaller_resource_resolver import PyInstallerResourceResolver
 from skhu_pc_management.infrastructure.windows.recycle_bin_reader import WindowsRecycleBinReader
 from skhu_pc_management.infrastructure.windows.subprocess_command_runner import SubprocessCommandRunner
+from skhu_pc_management.infrastructure.windows.windows_admin_privilege_checker import WindowsAdminPrivilegeChecker
 from skhu_pc_management.infrastructure.windows.windows_clipboard import WindowsClipboard
 from skhu_pc_management.infrastructure.windows.windows_process_launcher import WindowsProcessLauncher
+from skhu_pc_management.infrastructure.windows.windows_scheduled_task_reader import WindowsScheduledTaskReader
+from skhu_pc_management.infrastructure.windows.windows_taskbar_configurator import WindowsTaskbarConfigurator
 from skhu_pc_management.infrastructure.windows.winreg_registry import WinregRegistry
 from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import WmiPcInfoReader
 from skhu_pc_management.presentation.qt.main_window import MainWindow
+from skhu_pc_management.presentation.qt.startup_coordinator import StartupCoordinator
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
@@ -36,44 +48,99 @@ from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import Set
 
 
 def create_main_window() -> MainWindow:
+    test_mode = os.environ.get("SKHU_PC_MANAGEMENT_TEST_MODE") == "1"
+    safety_guard = SafetyGuard(test_mode=test_mode)
+
     registry = WinregRegistry()
     command_runner = SubprocessCommandRunner()
     process_launcher = WindowsProcessLauncher()
     clipboard = WindowsClipboard()
     product_key_provider = EmbeddedProductKeyProvider()
+    resource_resolver = PyInstallerResourceResolver()
 
     network_configurator = NetshNetworkConfigurator(command_runner)
+    taskbar_configurator = WindowsTaskbarConfigurator(resource_resolver)
     installed_program_reader = WindowsInstalledProgramReader(registry)
+    latest_version_provider = WindowsLatestVersionProvider()
     browser_data_reader = WindowsBrowserDataReader()
     power_settings_reader = WindowsPowerSettingsReader(command_runner)
+    scheduled_task_reader = WindowsScheduledTaskReader(command_runner)
     recycle_bin_reader = WindowsRecycleBinReader()
 
     load_pc_info = LoadPcInfo(WmiPcInfoReader(registry=registry, command_runner=command_runner))
     check_settings_status = CheckSettingsStatus(registry)
-    apply_settings = ApplySettings(registry, command_runner)
+    apply_settings = ApplySettings(registry, command_runner, safety_guard=safety_guard)
+    validate_taskbar_resources = ValidateTaskbarResources(taskbar_configurator)
+    apply_taskbar_layout = ApplyTaskbarLayout(taskbar_configurator, safety_guard=safety_guard)
     list_network_adapters = ListNetworkAdapters(network_configurator)
-    apply_static_ip = ApplyStaticIp(network_configurator)
-    set_dhcp = SetDhcp(network_configurator)
+    apply_static_ip = ApplyStaticIp(network_configurator, safety_guard=safety_guard)
+    set_dhcp = SetDhcp(network_configurator, safety_guard=safety_guard)
     run_pc_checks = RunPcChecks(
         [
             RecycleBinCheck(recycle_bin_reader),
-            InstalledProgramCheck(installed_program_reader, "chrome_install", "Chrome 설치/버전 확인", "chrome"),
+            ProgramVersionCheck(
+                installed_program_reader,
+                latest_version_provider,
+                "chrome_install",
+                "Chrome 설치/버전 확인",
+                "chrome",
+                "Chrome",
+            ),
             BrowserHistoryCheck(browser_data_reader, "chrome_history", "Chrome 기록 확인", "chrome"),
-            InstalledProgramCheck(installed_program_reader, "edge_install", "Edge 설치/버전 확인", "edge"),
+            ProgramVersionCheck(
+                installed_program_reader,
+                latest_version_provider,
+                "edge_install",
+                "Edge 설치/버전 확인",
+                "edge",
+                "Edge",
+            ),
             BrowserHistoryCheck(browser_data_reader, "edge_history", "Edge 기록 확인", "edge"),
             PowerSettingsCheck(power_settings_reader),
-            InstalledProgramCheck(installed_program_reader, "potplayer_install", "PotPlayer 설치/버전 확인", "potplayer"),
-            InstalledProgramCheck(installed_program_reader, "bandizip_install", "Bandizip 설치/버전 확인", "bandizip"),
+            AutoShutdownScheduleCheck(scheduled_task_reader),
+            ProgramVersionCheck(
+                installed_program_reader,
+                latest_version_provider,
+                "potplayer_install",
+                "PotPlayer 설치/버전 확인",
+                "potplayer",
+                "PotPlayer",
+            ),
+            ProgramVersionCheck(
+                installed_program_reader,
+                latest_version_provider,
+                "bandizip_install",
+                "Bandizip 설치/버전 확인",
+                "bandizip",
+                "Bandizip",
+            ),
             OfficeInstallCheck(installed_program_reader),
         ]
     )
-    activate_windows = ActivateWindows(product_key_provider, clipboard, process_launcher)
-    activate_office = ActivateOffice(product_key_provider, clipboard, process_launcher)
+    activate_windows = ActivateWindows(product_key_provider, clipboard, process_launcher, safety_guard=safety_guard)
+    activate_office = ActivateOffice(product_key_provider, clipboard, process_launcher, safety_guard=safety_guard)
+    pc_info_view_model = PcInfoViewModel(load_pc_info)
+    settings_view_model = SettingsViewModel(
+        check_settings_status,
+        apply_settings,
+        validate_taskbar_resources,
+        apply_taskbar_layout,
+    )
+    pc_check_view_model = PcCheckViewModel(run_pc_checks)
+    startup_coordinator = StartupCoordinator(
+        admin_privilege_checker=WindowsAdminPrivilegeChecker(),
+        pc_info_view_model=pc_info_view_model,
+        settings_view_model=settings_view_model,
+        pc_check_view_model=pc_check_view_model,
+    )
 
     return MainWindow(
-        pc_info_view_model=PcInfoViewModel(load_pc_info),
-        settings_view_model=SettingsViewModel(check_settings_status, apply_settings),
+        pc_info_view_model=pc_info_view_model,
+        settings_view_model=settings_view_model,
         network_view_model=NetworkViewModel(list_network_adapters, apply_static_ip, set_dhcp),
-        pc_check_view_model=PcCheckViewModel(run_pc_checks),
+        pc_check_view_model=pc_check_view_model,
         activation_view_model=ActivationViewModel(activate_windows, activate_office),
+        startup_coordinator=startup_coordinator,
+        resource_resolver=resource_resolver,
+        test_mode=test_mode,
     )

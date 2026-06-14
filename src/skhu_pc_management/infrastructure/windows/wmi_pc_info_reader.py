@@ -115,30 +115,41 @@ class WmiPcInfoReader:
         return gpu_names
 
     def _get_disks(self) -> list[DiskInfo]:
+        physical_disks = self._get_physical_disks()
         disks: list[DiskInfo] = []
-        for item in self._wmi_items("Win32_DiskDrive"):
-            model = _to_string(_get_value(item, "Model")) or "Unknown"
-            size_bytes = _to_int(_get_value(item, "Size"))
+        try:
+            for item in self._wmi_items("Win32_DiskDrive"):
+                disks.append(_build_disk_info(item, physical_disks))
+
+            if not disks and physical_disks:
+                for disk in physical_disks:
+                    disks.append(_build_disk_info_from_physical(disk))
+        except Exception:
             disks.append(
                 DiskInfo(
-                    model=model,
-                    size_gb=_bytes_to_gb(size_bytes),
-                    disk_type=self._get_disk_type(item),
+                    model="디스크 정보를 가져올 수 없습니다",
+                    disk_type="Unknown",
+                    display_type="알 수 없음",
                 )
             )
         return disks
 
     def _get_disk_type(self, disk: Any) -> str:
-        rotation_rate = _to_int(_get_value(disk, "MediaRotationRate"))
-        if rotation_rate is not None:
-            return "SSD" if rotation_rate == 0 else "HDD"
+        return _infer_disk_type(disk, None)
 
-        model = (_to_string(_get_value(disk, "Model")) or "").lower()
-        if "nvme" in model or "ssd" in model:
-            return "SSD"
-        if "hdd" in model:
-            return "HDD"
-        return "Unknown"
+    def _get_physical_disks(self) -> list["_PhysicalDiskMetadata"]:
+        disks: list[_PhysicalDiskMetadata] = []
+        for item in self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage"):
+            disks.append(
+                _PhysicalDiskMetadata(
+                    friendly_name=_to_string(_get_value(item, "FriendlyName")) or "",
+                    serial_number=_normalize_disk_token(_to_string(_get_value(item, "SerialNumber"))),
+                    media_type=_map_physical_media_type(_get_value(item, "MediaType")),
+                    bus_type=_map_bus_type(_get_value(item, "BusType")),
+                    size_bytes=_to_int(_get_value(item, "Size")) or 0,
+                )
+            )
+        return disks
 
     def _get_tpm_info(self) -> tuple[bool | None, str | None]:
         item = self._first_wmi_item("Win32_Tpm", namespace=r"root\CIMV2\Security\MicrosoftTpm")
@@ -238,6 +249,206 @@ class WmiPcInfoReader:
             return list(query_method())
         except Exception:
             return []
+
+
+@dataclass(frozen=True)
+class _PhysicalDiskMetadata:
+    friendly_name: str = ""
+    serial_number: str = ""
+    media_type: str = "Unknown"
+    bus_type: str = "Unknown"
+    size_bytes: int = 0
+
+
+def _build_disk_info(disk: Any, physical_disks: list[_PhysicalDiskMetadata]) -> DiskInfo:
+    model = _to_string(_get_value(disk, "Model")) or "Unknown"
+    serial = _normalize_disk_token(_to_string(_get_value(disk, "SerialNumber")))
+    size_bytes = _to_int(_get_value(disk, "Size")) or 0
+    matched = _find_best_physical_disk(physical_disks, model, serial, size_bytes)
+    disk_type = _infer_disk_type(disk, matched.media_type if matched else None)
+    bus_type = _infer_bus_type(disk, model, matched.bus_type if matched else None)
+    actual_size_gib = _bytes_to_gb(size_bytes)
+
+    return DiskInfo(
+        model=model,
+        size_gb=actual_size_gib,
+        actual_size_gib=actual_size_gib,
+        rated_size=_format_rated_size(size_bytes),
+        disk_type=disk_type,
+        bus_type=bus_type,
+        display_type=_compose_disk_type_display(disk_type, bus_type),
+        serial_number=serial or None,
+        raw_size_bytes=size_bytes or None,
+    )
+
+
+def _build_disk_info_from_physical(disk: _PhysicalDiskMetadata) -> DiskInfo:
+    actual_size_gib = _bytes_to_gb(disk.size_bytes)
+    disk_type = disk.media_type or "Unknown"
+    bus_type = disk.bus_type or "Unknown"
+    return DiskInfo(
+        model=disk.friendly_name or "Unknown",
+        size_gb=actual_size_gib,
+        actual_size_gib=actual_size_gib,
+        rated_size=_format_rated_size(disk.size_bytes),
+        disk_type=disk_type,
+        bus_type=bus_type,
+        display_type=_compose_disk_type_display(disk_type, bus_type),
+        serial_number=disk.serial_number or None,
+        raw_size_bytes=disk.size_bytes or None,
+    )
+
+
+def _find_best_physical_disk(
+    physical_disks: list[_PhysicalDiskMetadata],
+    model: str,
+    serial: str,
+    size_bytes: int,
+) -> _PhysicalDiskMetadata | None:
+    if not physical_disks:
+        return None
+
+    if serial:
+        for disk in physical_disks:
+            if disk.serial_number == serial:
+                return disk
+
+    normalized_model = _normalize_disk_token(model)
+    if normalized_model:
+        for disk in physical_disks:
+            normalized_name = _normalize_disk_token(disk.friendly_name)
+            if normalized_name and (normalized_name in normalized_model or normalized_model in normalized_name):
+                return disk
+
+    if size_bytes > 0:
+        tolerance = 4 * 1024**3
+        candidates = sorted(physical_disks, key=lambda disk: abs(disk.size_bytes - size_bytes))
+        if candidates and abs(candidates[0].size_bytes - size_bytes) <= tolerance:
+            return candidates[0]
+
+    return None
+
+
+def _infer_disk_type(disk: Any, physical_disk_type: str | None) -> str:
+    if physical_disk_type and physical_disk_type != "Unknown":
+        return physical_disk_type
+
+    rotation_rate = _to_int(_get_value(disk, "MediaRotationRate"))
+    if rotation_rate is not None:
+        return "SSD" if rotation_rate == 0 else "HDD"
+
+    media_type = (_to_string(_get_value(disk, "MediaType")) or "").lower()
+    model = (_to_string(_get_value(disk, "Model")) or "").lower()
+    text = f"{media_type} {model}"
+    if "nvme" in text or "ssd" in text or "solid state" in text:
+        return "SSD"
+    if "hdd" in text or "hard disk" in text:
+        return "HDD"
+    return "Unknown"
+
+
+def _infer_bus_type(disk: Any, model: str, physical_bus_type: str | None) -> str:
+    if physical_bus_type and physical_bus_type != "Unknown":
+        return physical_bus_type
+
+    interface_type = _to_string(_get_value(disk, "InterfaceType"))
+    if interface_type:
+        normalized = interface_type.upper()
+        if normalized in {"IDE", "SCSI", "ATA"}:
+            return "NVMe" if "nvme" in model.lower() else "SATA"
+        if normalized == "USB":
+            return "USB"
+
+    model_lower = model.lower()
+    if "nvme" in model_lower:
+        return "NVMe"
+    if "sata" in model_lower:
+        return "SATA"
+    return "Unknown"
+
+
+def _compose_disk_type_display(disk_type: str, bus_type: str | None) -> str:
+    normalized_type = disk_type or "Unknown"
+    if normalized_type == "Unknown":
+        normalized_type = "알 수 없음"
+    if not bus_type or bus_type == "Unknown":
+        return normalized_type
+    return f"{normalized_type} ({bus_type})"
+
+
+def _format_rated_size(size_bytes: int | None) -> str | None:
+    if not size_bytes:
+        return None
+
+    actual_gib = size_bytes // (1024**3)
+    if actual_gib <= 1:
+        return "1GB"
+
+    rated_gib = 1
+    while rated_gib < actual_gib:
+        rated_gib <<= 1
+
+    if rated_gib >= 1024 and rated_gib % 1024 == 0:
+        return f"{rated_gib // 1024}TB"
+    return f"{rated_gib}GB"
+
+
+def _normalize_disk_token(value: str | None) -> str:
+    if not value:
+        return ""
+    return "".join(char for char in value if char.isalnum()).upper()
+
+
+def _map_physical_media_type(value: object) -> str:
+    code = _to_int(value)
+    if code is not None:
+        return {
+            3: "HDD",
+            4: "SSD",
+            5: "SCM",
+        }.get(code, "Unknown")
+
+    text = (_to_string(value) or "").strip().lower()
+    if text in {"hdd", "hard disk drive"}:
+        return "HDD"
+    if text in {"ssd", "solid state drive"}:
+        return "SSD"
+    if text == "scm":
+        return "SCM"
+    return "Unknown"
+
+
+def _map_bus_type(value: object) -> str:
+    code = _to_int(value)
+    if code is not None:
+        return {
+            3: "ATA",
+            4: "SATA",
+            7: "USB",
+            8: "RAID",
+            9: "iSCSI",
+            10: "SAS",
+            11: "SATA",
+            12: "SD",
+            13: "MMC",
+            14: "Virtual",
+            15: "File Backed Virtual",
+            16: "Spaces",
+            17: "NVMe",
+        }.get(code, "Unknown")
+
+    text = (_to_string(value) or "").strip()
+    if not text:
+        return "Unknown"
+    lower = text.lower()
+    return {
+        "nvme": "NVMe",
+        "sata": "SATA",
+        "ata": "ATA",
+        "usb": "USB",
+        "raid": "RAID",
+        "sas": "SAS",
+    }.get(lower, text)
 
 
 def _get_value(item: Any | None, property_name: str) -> Any | None:
