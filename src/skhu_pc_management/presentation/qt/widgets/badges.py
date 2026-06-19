@@ -35,7 +35,7 @@ def tone_from_status_text(text: str) -> str:
 
 def badge_tone_from_status(text: str) -> str:
     normalized = text.lower()
-    if any(keyword in text for keyword in ("정상", "적용됨", "설치됨", "완료", "최신")):
+    if any(keyword in text for keyword in ("정상", "설정됨", "적용됨", "설치됨", "완료", "최신")):
         return "success"
     if any(keyword in text for keyword in ("주의", "미적용", "미설정", "값 없음", "필요", "존재", "설치되지")):
         return "warning"

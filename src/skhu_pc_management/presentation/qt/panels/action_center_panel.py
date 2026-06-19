@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -25,16 +24,15 @@ from skhu_pc_management.presentation.qt.maintenance_confirmations import mainten
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
-from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
+from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge
 from skhu_pc_management.presentation.qt.widgets.buttons import (
     primary_button,
-    secondary_button,
     set_button_role,
     subtle_button,
     warning_button,
 )
 from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SectionCard, SummaryCard
-from skhu_pc_management.presentation.qt.widgets.tables import configure_table, status_item, table_item
+from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths, status_item, table_item
 
 
 @dataclass(frozen=True)
@@ -119,6 +117,7 @@ class ActionCenterPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = QWidget()
+        content.setObjectName("scrollContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
@@ -145,6 +144,7 @@ class ActionCenterPanel(QWidget):
         title_column.addWidget(subtitle)
         row.addLayout(title_column)
         row.addStretch()
+        row.addWidget(self.refresh_status_button)
         return row
 
     def _summary_row(self) -> QHBoxLayout:
@@ -161,7 +161,6 @@ class ActionCenterPanel(QWidget):
         body.setSpacing(14)
         left = QVBoxLayout()
         left.setSpacing(14)
-        left.addWidget(self._recommended_actions_card())
         left.addWidget(self._activation_card())
         left.addWidget(self._settings_card())
         left.addWidget(self._quick_tools_card())
@@ -175,55 +174,34 @@ class ActionCenterPanel(QWidget):
         body.addLayout(right, 2)
         return body
 
-    def _recommended_actions_card(self) -> QWidget:
-        card = Card("권장 조치", "현재 상태 요약을 기준으로 먼저 확인할 항목을 안내합니다.")
-        self.recommended_action_label = QLabel("상태 새로고침을 실행해 현재 상태를 확인하세요.")
-        self.recommended_action_label.setObjectName("mutedText")
-        self.recommended_action_label.setWordWrap(True)
-        card.body_layout.addWidget(self.recommended_action_label)
-
-        button_row = QHBoxLayout()
-        button_row.addWidget(self.refresh_status_button)
-        self.recommended_apply_button = secondary_button("선택한 설정 적용")
-        self.recommended_apply_button.clicked.connect(self._apply_settings)
-        button_row.addWidget(self.recommended_apply_button)
-        button_row.addStretch()
-        card.body_layout.addLayout(button_row)
-        return card
-
     def _activation_card(self) -> QWidget:
-        card = Card("인증", "제품키는 화면에 표시하지 않고 클립보드 복사와 실행 준비만 수행합니다.")
-        target_row = QHBoxLayout()
-        target_label = QLabel("대상 Windows 버전")
-        target_label.setObjectName("fieldLabel")
+        card = Card("인증", "제품키는 화면에 표시하지 않으며, 버튼 실행 시에만 복사됩니다.")
         self.win11_radio = QRadioButton("Windows 11")
         self.win10_radio = QRadioButton("Windows 10")
         self.win11_radio.setChecked(self._activation.selected_windows_version != "windows_10")
+        self.win10_radio.setChecked(self._activation.selected_windows_version == "windows_10")
         self.windows_group = QButtonGroup(self)
         self.windows_group.addButton(self.win11_radio)
         self.windows_group.addButton(self.win10_radio)
         self.detected_windows_label = QLabel("현재 감지: 알 수 없음")
         self.detected_windows_label.setObjectName("mutedText")
-        target_row.addWidget(target_label)
-        target_row.addWidget(self.win11_radio)
-        target_row.addWidget(self.win10_radio)
-        target_row.addStretch()
-        target_row.addWidget(self.detected_windows_label)
-        card.body_layout.addLayout(target_row)
-
-        key_grid = QGridLayout()
-        key_grid.setHorizontalSpacing(12)
-        key_grid.setVerticalSpacing(10)
-        key_grid.addWidget(_label("Windows 키"), 0, 0)
-        self.windows_key = QLineEdit("제품키는 화면에 표시하지 않습니다.")
-        self.windows_key.setReadOnly(True)
-        self.windows_key.setEchoMode(QLineEdit.Password)
-        key_grid.addWidget(self.windows_key, 1, 0)
         self.windows_activation_button = primary_button("복사 및 인증 창 열기")
-        key_grid.addWidget(self.windows_activation_button, 1, 1)
+        self.windows_activation_button.setObjectName("activationActionButton")
+        self.windows_activation_button.setFixedWidth(220)
 
-        key_grid.addWidget(_label("Office 키"), 2, 0)
-        office_row = QHBoxLayout()
+        windows_options = _option_column(
+            self._radio_row(self.win11_radio, self.win10_radio),
+            self.detected_windows_label,
+        )
+        card.body_layout.addWidget(
+            self._action_row(
+                "Windows 인증",
+                "",
+                self.windows_activation_button,
+                option_widget=windows_options,
+            )
+        )
+
         self.office2021_radio = QRadioButton("Office 2021")
         self.office2024_radio = QRadioButton("Office 2024")
         self.office2024_radio.setChecked(self._activation.selected_office_version != "2021")
@@ -231,23 +209,26 @@ class ActionCenterPanel(QWidget):
         self.office_group = QButtonGroup(self)
         self.office_group.addButton(self.office2021_radio)
         self.office_group.addButton(self.office2024_radio)
-        office_row.addWidget(self.office2021_radio)
-        office_row.addWidget(self.office2024_radio)
-        office_row.addStretch()
-        key_grid.addLayout(office_row, 2, 1)
-        self.office_key = QLineEdit("제품키는 화면에 표시하지 않습니다.")
-        self.office_key.setReadOnly(True)
-        self.office_key.setEchoMode(QLineEdit.Password)
-        key_grid.addWidget(self.office_key, 3, 0)
         self.office_activation_button = primary_button("복사 및 Excel 실행")
-        key_grid.addWidget(self.office_activation_button, 3, 1)
-        card.body_layout.addLayout(key_grid)
-
+        self.office_activation_button.setObjectName("activationActionButton")
         self.office_status_label = QLabel("설치된 Office 상태: 미확인")
         self.office_status_label.setObjectName("mutedText")
+        self.office_activation_button.setFixedWidth(220)
+        office_options = _option_column(
+            self._radio_row(self.office2021_radio, self.office2024_radio),
+            self.office_status_label,
+        )
+        card.body_layout.addWidget(
+            self._action_row(
+                "Office 인증",
+                "",
+                self.office_activation_button,
+                option_widget=office_options,
+            )
+        )
+
         self.activation_status = QLabel(self._activation.status_message)
         self.activation_status.setObjectName("mutedText")
-        card.body_layout.addWidget(self.office_status_label)
         card.body_layout.addWidget(self.activation_status)
 
         self.windows_activation_button.clicked.connect(self._prepare_windows_activation)
@@ -331,9 +312,10 @@ class ActionCenterPanel(QWidget):
 
     def _settings_status_card(self) -> QWidget:
         card = Card("시스템 설정 적용 상태")
-        self.settings_table = QTableWidget(0, 4)
-        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "적용 결과", "현재 상태", "상세"])
+        self.settings_table = QTableWidget(0, 3)
+        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "현재 상태", "상세"])
         configure_table(self.settings_table, compact=True)
+        set_column_widths(self.settings_table, (220, 110))
         self.settings_table.setMinimumHeight(260)
         card.body_layout.addWidget(self.settings_table)
         return card
@@ -343,6 +325,7 @@ class ActionCenterPanel(QWidget):
         self.pc_check_table = QTableWidget(0, 3)
         self.pc_check_table.setHorizontalHeaderLabels(["항목", "상태", "상세 내용"])
         configure_table(self.pc_check_table, compact=True)
+        set_column_widths(self.pc_check_table, (170, 82))
         self.pc_check_table.setMinimumHeight(320)
         card.body_layout.addWidget(self.pc_check_table)
         return card
@@ -353,33 +336,82 @@ class ActionCenterPanel(QWidget):
         self.shutdown_status_label = StatusBadge("미확인", "neutral")
         self.power_apply_button = warning_button("전원 옵션 '안 함' 적용")
         self.shutdown_apply_button = warning_button("23시 자동종료 적용")
+        self.power_apply_button.setFixedWidth(210)
+        self.shutdown_apply_button.setFixedWidth(210)
+        self.power_description_label = QLabel("화면 끄기 / 절전 / 최대 절전: 확인 필요")
+        self.power_description_label.setObjectName("mutedText")
+        self.power_description_label.setWordWrap(True)
+        self.shutdown_description_label = QLabel("자동종료 스케줄 상태 확인 필요")
+        self.shutdown_description_label.setObjectName("mutedText")
+        self.shutdown_description_label.setWordWrap(True)
         card.body_layout.addWidget(
-            self._action_row("전원 옵션", "화면 끄기/절전/최대 절전을 안 함으로 설정합니다.", self.power_status_label, self.power_apply_button)
+            self._action_row(
+                "전원 옵션",
+                "강의실 전원 정책 상태를 확인하고 필요 시 적용합니다.",
+                self.power_apply_button,
+                option_widget=self.power_description_label,
+                status_widget=self.power_status_label,
+            )
         )
         card.body_layout.addWidget(
-            self._action_row("23시 자동종료", "22:55에 시작해 23:00에 종료되도록 예약 작업을 등록합니다.", self.shutdown_status_label, self.shutdown_apply_button)
+            self._action_row(
+                "23시 자동종료",
+                "강의실 자동종료 예약 상태를 확인하고 필요 시 적용합니다.",
+                self.shutdown_apply_button,
+                option_widget=self.shutdown_description_label,
+                status_widget=self.shutdown_status_label,
+            )
         )
         self.power_apply_button.clicked.connect(lambda: self._run_maintenance("set_power_never"))
         self.shutdown_apply_button.clicked.connect(lambda: self._run_maintenance("set_auto_shutdown_at_23"))
         return card
 
-    def _action_row(self, title: str, description: str, badge: StatusBadge, button: QPushButton) -> QWidget:
+    def _action_row(
+        self,
+        title: str,
+        description: str,
+        action_button: QPushButton,
+        *,
+        option_widget: QWidget | None = None,
+        status_widget: QWidget | None = None,
+        tooltip: str | None = None,
+    ) -> QWidget:
         frame = QFrame()
-        frame.setObjectName("sectionCard")
+        frame.setObjectName("actionRow")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(12)
         text_column = QVBoxLayout()
+        text_column.setSpacing(5)
         name = QLabel(title)
-        name.setObjectName("fieldLabel")
-        desc = QLabel(description)
-        desc.setObjectName("mutedText")
-        desc.setWordWrap(True)
+        name.setObjectName("actionTitle")
         text_column.addWidget(name)
-        text_column.addWidget(desc)
+        if description:
+            desc = QLabel(description)
+            desc.setObjectName("actionDescription")
+            desc.setWordWrap(True)
+            if tooltip:
+                frame.setToolTip(tooltip)
+                desc.setToolTip(tooltip)
+            text_column.addWidget(desc)
+        if option_widget is not None:
+            text_column.addWidget(option_widget)
         layout.addLayout(text_column, 1)
-        layout.addWidget(badge)
-        layout.addWidget(button)
+        if status_widget is not None:
+            layout.addWidget(status_widget)
+        layout.addWidget(action_button)
         return frame
+
+    def _radio_row(self, *buttons: QRadioButton) -> QWidget:
+        container = QWidget()
+        container.setObjectName("transparentContainer")
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        for button in buttons:
+            row.addWidget(button)
+        row.addStretch()
+        return container
 
     def render(self) -> None:
         self._render_settings_rows()
@@ -395,12 +427,13 @@ class ActionCenterPanel(QWidget):
             apply_status = row[1] if len(row) > 1 else ""
             current_status = row[2] if len(row) > 2 else ""
             detail = row[3] if len(row) > 3 else ""
+            if apply_status not in ("", "-"):
+                detail = f"{apply_status} / {detail}" if detail else apply_status
             self.settings_table.setItem(row_index, 0, table_item(name))
-            self.settings_table.setItem(row_index, 1, status_item(apply_status))
-            self.settings_table.setItem(row_index, 2, status_item(current_status))
+            self.settings_table.setItem(row_index, 1, status_item(current_status))
             detail_item = table_item(detail)
             detail_item.setToolTip(detail)
-            self.settings_table.setItem(row_index, 3, detail_item)
+            self.settings_table.setItem(row_index, 2, detail_item)
 
     def _render_pc_check_rows(self) -> None:
         rows = self._pc_check.result_rows
@@ -492,33 +525,28 @@ class ActionCenterPanel(QWidget):
                 checkbox.setChecked(False)
 
     def _sync_status_summaries(self) -> None:
-        self.settings_summary.set_value(self._settings.summary_text)
-        self.pc_check_summary.set_value(self._pc_check.summary_text)
-        self.office_summary.set_value(self._pc_check.installed_office_status_text)
-        self.classroom_summary.set_value(
-            f"전원: {self._pc_check.power_option_status_text}",
-            f"자동 종료: {self._pc_check.auto_shutdown_status_text}",
+        self.settings_summary.set_value(self._settings.summary_text, tone=_settings_summary_tone(self._settings))
+        self.pc_check_summary.set_value(self._pc_check.summary_text, tone=_pc_check_summary_tone(self._pc_check))
+        self.office_summary.set_value(self._pc_check.installed_office_status_text, tone=_office_summary_tone(self._pc_check.installed_office_status_text))
+        classroom_value, classroom_subtitle, classroom_tone = _classroom_summary_value(
+            self._pc_check.power_option_status_text,
+            self._pc_check.auto_shutdown_status_text,
         )
-        self.power_status_label.set_status(self._pc_check.power_option_status_text, badge_tone_from_status(self._pc_check.power_option_status_text))
-        self.shutdown_status_label.set_status(self._pc_check.auto_shutdown_status_text, badge_tone_from_status(self._pc_check.auto_shutdown_status_text))
+        self.classroom_summary.set_value(classroom_value, classroom_subtitle, classroom_tone)
+        self.classroom_summary.setToolTip(
+            f"전원: {self._pc_check.power_option_status_text}\n자동 종료: {self._pc_check.auto_shutdown_status_text}"
+        )
+        power_status, power_description = _short_power_status(self._pc_check.power_option_status_text)
+        shutdown_status, shutdown_description = _short_shutdown_status(self._pc_check.auto_shutdown_status_text)
+        self.power_status_label.set_status(power_status)
+        self.power_status_label.setToolTip(self._pc_check.power_option_status_text)
+        self.shutdown_status_label.set_status(shutdown_status)
+        self.shutdown_status_label.setToolTip(self._pc_check.auto_shutdown_status_text)
+        self.power_description_label.setText(power_description)
+        self.power_description_label.setToolTip(self._pc_check.power_option_status_text)
+        self.shutdown_description_label.setText(shutdown_description)
+        self.shutdown_description_label.setToolTip(self._pc_check.auto_shutdown_status_text)
         self.office_status_label.setText(f"설치된 Office 상태: {self._pc_check.installed_office_status_text}")
-        self.recommended_action_label.setText(self._recommended_action_text())
-
-    def _recommended_action_text(self) -> str:
-        actions: list[str] = []
-        if self._settings.warning_count:
-            actions.append(f"기본 설정 {self._settings.warning_count}개 항목의 현재 상태를 확인하세요.")
-        if self._pc_check.error_count or self._pc_check.warning_count:
-            actions.append(
-                f"PC 점검 결과 오류 {self._pc_check.error_count}개, 주의 {self._pc_check.warning_count}개가 있습니다."
-            )
-        power_text = self._pc_check.power_option_status_text
-        shutdown_text = self._pc_check.auto_shutdown_status_text
-        if "주의" in power_text or "확인" in power_text:
-            actions.append("전원 옵션 상태를 확인하세요.")
-        if "등록되어 있지" in shutdown_text or "올바르지" in shutdown_text or "확인" in shutdown_text:
-            actions.append("23시 자동종료 스케줄 상태를 확인하세요.")
-        return "\n".join(actions) if actions else "현재 표시된 주요 상태가 정상 범위입니다."
 
     def _launch_program(self, program_id: str) -> None:
         if self._launch_program_use_case is None:
@@ -583,7 +611,6 @@ class ActionCenterPanel(QWidget):
             return
         for button in (
             self.apply_settings_button,
-            self.recommended_apply_button,
             self.windows_activation_button,
             self.office_activation_button,
             self.power_apply_button,
@@ -594,7 +621,73 @@ class ActionCenterPanel(QWidget):
             button.setToolTip(TEST_MODE_DISABLED_MESSAGE)
 
 
-def _label(text: str) -> QLabel:
-    label = QLabel(text)
-    label.setObjectName("fieldLabel")
-    return label
+def _option_column(*widgets: QWidget) -> QWidget:
+    container = QWidget()
+    container.setObjectName("transparentContainer")
+    layout = QVBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+    for widget in widgets:
+        layout.addWidget(widget)
+    return container
+
+
+def _settings_summary_tone(settings: SettingsViewModel) -> str:
+    if not settings.result_rows:
+        return "danger"
+    return "danger" if settings.warning_count else "success"
+
+
+def _pc_check_summary_tone(pc_check: PcCheckViewModel) -> str:
+    if not pc_check.result_rows:
+        return "danger"
+    return "danger" if pc_check.error_count or pc_check.warning_count or pc_check.unknown_count else "success"
+
+
+def _office_summary_tone(text: str) -> str:
+    if _contains_any(text, ("권장", "설치됨", "정상", "최신")) and not _contains_any(text, ("설치되어 있지", "권장하지", "주의", "오류", "확인")):
+        return "success"
+    if _contains_any(text, ("미확인", "알 수 없음")):
+        return "danger"
+    return "danger" if _contains_any(text, ("설치되어 있지", "권장하지", "주의", "오류", "실패")) else "neutral"
+
+
+def _classroom_summary_value(power_text: str, shutdown_text: str) -> tuple[str, str, str]:
+    power_status, _ = _short_power_status(power_text)
+    shutdown_status, _ = _short_shutdown_status(shutdown_text)
+    is_ok = power_status == "정상" and shutdown_status == "정상"
+    value = "정상" if is_ok else "확인 필요"
+    subtitle = f"전원: {power_status} · 자동 종료: {shutdown_status}"
+    return value, subtitle, "success" if is_ok else "danger"
+
+
+def _short_power_status(text: str) -> tuple[str, str]:
+    status = _short_policy_status(text, normal_tokens=("올바르게", "모두 비활성화", "안 함", "정상"))
+    if status == "정상":
+        return status, "화면 끄기 / 절전 / 최대 절전: 안 함"
+    if status == "확인 불가":
+        return status, "전원 옵션 상태 확인 필요"
+    return status, "전원 옵션 설정 확인 필요"
+
+
+def _short_shutdown_status(text: str) -> tuple[str, str]:
+    status = _short_policy_status(text, normal_tokens=("정상 등록", "등록되어 있습니다", "정상", "올바르게 예약"))
+    if status == "정상":
+        return status, "22:55 시작, 23:00 종료 예약"
+    if status == "확인 불가":
+        return status, "자동종료 스케줄 상태 확인 필요"
+    return status, "자동종료 예약 작업 확인 필요"
+
+
+def _short_policy_status(text: str, normal_tokens: tuple[str, ...]) -> str:
+    if _contains_any(text, ("확인 불가", "읽을 수 없음", "알 수 없음", "미확인")):
+        return "확인 불가"
+    if _contains_any(text, ("주의", "오류", "실패", "등록되어 있지", "올바르지", "필요", "활성화됨")):
+        return "확인 필요"
+    if _contains_any(text, normal_tokens):
+        return "정상"
+    return "확인 필요"
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)

@@ -4,14 +4,23 @@ from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
 
 
 APP_QSS = """
-QMainWindow, QWidget {
+QMainWindow {
     background: #F6F7F9;
+}
+QWidget {
     color: #111827;
     font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
     font-size: 13px;
 }
-QFrame#appShell {
+QWidget#appShell {
     background: #F6F7F9;
+}
+QWidget#panelContent,
+QWidget#formGrid,
+QWidget#fieldRow,
+QWidget#scrollContent,
+QWidget#transparentContainer {
+    background: transparent;
 }
 QFrame#topBar {
     background: #FFFFFF;
@@ -34,10 +43,33 @@ QFrame#card, QFrame#sectionCard, QFrame#summaryCard {
     border-radius: 12px;
 }
 QFrame#sectionCard {
-    background: #FAFAFA;
+    background: #FFFFFF;
+    border: 1px solid #EEF0F3;
+    border-radius: 10px;
+}
+QFrame#actionRow {
+    background: #FFFFFF;
+    border: 1px solid #EEF0F3;
+    border-radius: 10px;
 }
 QFrame#summaryCard {
     background: #FFFFFF;
+}
+QFrame#summaryCard[tone="success"] {
+    background: #F0FDF4;
+    border: 1px solid #BBF7D0;
+}
+QFrame#summaryCard[tone="danger"] {
+    background: #FEF2F2;
+    border: 1px solid #FECACA;
+}
+QFrame#summaryCard[tone="warning"] {
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+}
+QFrame#summaryCard[tone="neutral"] {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
 }
 QFrame#infoBanner {
     background: #EFF6FF;
@@ -67,6 +99,17 @@ QLabel#sectionTitle, QLabel#cardTitle {
     font-size: 15px;
     font-weight: 650;
 }
+QLabel#actionTitle {
+    color: #111827;
+    font-weight: 700;
+}
+QLabel#actionDescription {
+    color: #6B7280;
+}
+QLabel#compactStatusText {
+    color: #374151;
+    font-weight: 650;
+}
 QLabel#summaryTitle {
     color: #6B7280;
     font-size: 12px;
@@ -82,11 +125,49 @@ QLabel#fieldLabel {
     font-weight: 650;
 }
 QLabel#readOnlyField {
-    background: #FAFAFA;
+    background: #F9FAFB;
     border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    padding: 8px 10px;
+    border-radius: 6px;
+    padding: 7px 10px;
     color: #111827;
+    font-weight: 600;
+    min-height: 26px;
+}
+QLabel#statusValueField {
+    background: #F9FAFB;
+    border: 1px solid #E5E7EB;
+    border-left: 3px solid #D1D5DB;
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: #111827;
+    font-weight: 600;
+    min-height: 26px;
+}
+QLabel#statusValueField[tone="success"] {
+    border-left-color: #16A34A;
+    color: #166534;
+}
+QLabel#statusValueField[tone="warning"] {
+    border-left-color: #D97706;
+    color: #92400E;
+}
+QLabel#statusValueField[tone="danger"] {
+    border-left-color: #DC2626;
+    color: #991B1B;
+}
+QLabel#statusValueField[tone="neutral"] {
+    border-left-color: #D1D5DB;
+    color: #374151;
+}
+QLabel#statusValueField[tone="info"] {
+    border-left-color: #0EA5E9;
+    color: #075985;
+}
+QLabel#inlineHint {
+    background: transparent;
+    border: 0;
+    padding: 2px 0;
+    color: #4B5563;
 }
 QLabel#statusBadge {
     border-radius: 999px;
@@ -187,6 +268,10 @@ QPushButton:disabled {
     border-color: #E5E7EB;
     color: #9CA3AF;
 }
+QPushButton#activationActionButton {
+    min-width: 190px;
+    max-width: 240px;
+}
 QLineEdit, QTextEdit, QComboBox {
     background: #FFFFFF;
     border: 1px solid #D1D5DB;
@@ -207,15 +292,15 @@ QCheckBox, QRadioButton {
 }
 QTableWidget {
     background: #FFFFFF;
-    alternate-background-color: #FAFAFA;
+    alternate-background-color: #FFFFFF;
     border: 1px solid #E5E7EB;
     border-radius: 8px;
-    gridline-color: #F3F4F6;
+    gridline-color: #F8FAFC;
     selection-background-color: #EFF6FF;
     selection-color: #111827;
 }
 QHeaderView::section {
-    background: #FAFAFA;
+    background: #F9FAFB;
     border: 0;
     border-bottom: 1px solid #E5E7EB;
     color: #4B5563;
@@ -224,6 +309,9 @@ QHeaderView::section {
 }
 QScrollArea {
     border: 0;
+    background: transparent;
+}
+QScrollArea QWidget#qt_scrollarea_viewport {
     background: transparent;
 }
 QScrollArea > QWidget > QWidget {

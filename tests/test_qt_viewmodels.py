@@ -8,7 +8,7 @@ from skhu_pc_management.domain.settings.models import ApplyResult, ApplySettings
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
-from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel
+from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel, _format_windows_detail
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
 
 
@@ -19,6 +19,8 @@ class FakeLoadPcInfo:
             user_name="student",
             os_name="Windows 11",
             windows_build="26100",
+            windows_ubr="3323",
+            windows_architecture="64-bit",
             cpu_name="CPU",
             memory_gb=16,
         )
@@ -101,6 +103,7 @@ def test_pc_info_viewmodel_refresh_updates_rows() -> None:
 
     assert view_model.status_message == "PC 정보를 불러왔습니다."
     assert ("PC 이름", "PC01") in view_model.rows
+    assert view_model.windows_version_detail == "26100.3323 (64비트)"
 
 
 def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
@@ -209,6 +212,14 @@ def test_pc_info_viewmodel_translates_unknown_values() -> None:
     assert ("Windows", "알 수 없음") in view_model.rows
     assert ("GPU", "알 수 없음") in view_model.rows
     assert ("TPM", "알 수 없음") in view_model.rows
+
+
+def test_pc_info_viewmodel_formats_windows_detail() -> None:
+    assert _format_windows_detail("26200", "8655", "64비트") == "26200.8655 (64비트)"
+    assert _format_windows_detail("26200", None, "64비트") == "26200 (64비트)"
+    assert _format_windows_detail("26200", "8655", "64-bit") == "26200.8655 (64비트)"
+    assert _format_windows_detail(None, None, "64비트") == "64비트"
+    assert _format_windows_detail(None, None, None) == "알 수 없음"
 
 
 def test_pc_check_viewmodel_updates_rows() -> None:

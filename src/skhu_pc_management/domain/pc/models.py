@@ -43,6 +43,7 @@ class PcInfo:
     cpu_name: str
     memory_gb: float | None = None
     windows_build: str | None = None
+    windows_ubr: str | None = None
     windows_architecture: str | None = None
     windows_release: str | None = None
     memory_modules: list[MemoryModuleInfo] = field(default_factory=list)

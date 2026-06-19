@@ -17,11 +17,10 @@ from PySide6.QtWidgets import (
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
 from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel
-from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
 from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, secondary_button, set_button_role, warning_button
-from skhu_pc_management.presentation.qt.widgets.forms import FormGrid, ReadOnlyField
+from skhu_pc_management.presentation.qt.widgets.forms import FormGrid, ReadOnlyField, StatusValueField
 from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SummaryCard
-from skhu_pc_management.presentation.qt.widgets.tables import configure_table, table_item
+from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths, table_item
 
 
 NOT_IMPLEMENTED_MESSAGE = "아직 Python 마이그레이션에서 구현되지 않은 기능입니다."
@@ -56,15 +55,17 @@ class PcInfoPanel(QWidget):
         self.cpu = ReadOnlyField()
         self.ram = ReadOnlyField()
         self.gpu = ReadOnlyField()
-        self.tpm_version = ReadOnlyField()
-        self.tpm_status = StatusBadge("알 수 없음", "neutral")
-        self.secure_boot = StatusBadge("알 수 없음", "neutral")
-        self.boot_mode = StatusBadge("알 수 없음", "neutral")
+        self.tpm_version = StatusValueField("알 수 없음", "neutral")
+        self.tpm_status = StatusValueField("알 수 없음", "neutral")
+        self.secure_boot = StatusValueField("알 수 없음", "neutral")
+        self.boot_mode = StatusValueField("알 수 없음", "neutral")
 
         self.disk_table = QTableWidget(0, 4)
         self.disk_table.setHorizontalHeaderLabels(["모델", "타입", "정격 용량", "실제 용량"])
         configure_table(self.disk_table)
-        self.disk_table.setMinimumHeight(220)
+        set_column_widths(self.disk_table, (260, 110, 100))
+        self.disk_table.setMinimumHeight(180)
+        self.disk_table.setMaximumHeight(240)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -72,6 +73,7 @@ class PcInfoPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = QWidget()
+        content.setObjectName("scrollContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
@@ -161,10 +163,12 @@ class PcInfoPanel(QWidget):
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
-        _add_badge_row(grid, 0, "TPM 버전", self.tpm_version)
-        _add_badge_row(grid, 1, "TPM 상태", self.tpm_status)
-        _add_badge_row(grid, 2, "Secure Boot", self.secure_boot)
-        _add_badge_row(grid, 3, "Boot Mode", self.boot_mode)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        _add_value_row(grid, 0, "TPM 버전", self.tpm_version)
+        _add_value_row(grid, 1, "TPM 상태", self.tpm_status)
+        _add_value_row(grid, 2, "Secure Boot", self.secure_boot)
+        _add_value_row(grid, 3, "Boot Mode", self.boot_mode)
         card.body_layout.addLayout(grid)
         return card
 
@@ -229,17 +233,28 @@ class PcInfoPanel(QWidget):
         self.cpu.setText(self._view_model.cpu)
         self.ram.setText(self._view_model.ram)
         self.gpu.setText(self._view_model.gpu)
-        self.tpm_version.setText(self._view_model.tpm_version)
+        self.tpm_version.set_status(self._view_model.tpm_version, "neutral")
         self.tpm_status.set_status(self._view_model.tpm_status_text)
-        self.secure_boot.set_status(self._view_model.secure_boot_status_text, badge_tone_from_status(self._view_model.secure_boot_status_text))
+        self.secure_boot.set_status(self._view_model.secure_boot_status_text)
         self.boot_mode.set_status(self._view_model.boot_mode)
         self.disk_table.setRowCount(len(self._view_model.disks))
         for row_index, row in enumerate(self._view_model.disks):
             for column_index, value in enumerate(row):
                 self.disk_table.setItem(row_index, column_index, table_item(value))
+        for field in (
+            self.pc_name,
+            self.user_name,
+            self.windows,
+            self.windows_detail,
+            self.cpu,
+            self.ram,
+            self.gpu,
+            self.tpm_version,
+        ):
+            field.setToolTip(field.text())
 
 
-def _add_badge_row(grid: QGridLayout, row: int, label_text: str, widget: QWidget) -> None:
+def _add_value_row(grid: QGridLayout, row: int, label_text: str, widget: QWidget) -> None:
     label = QLabel(label_text)
     label.setObjectName("fieldLabel")
     grid.addWidget(label, row, 0)

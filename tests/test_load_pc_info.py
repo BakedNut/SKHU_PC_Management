@@ -61,6 +61,11 @@ class FakeRegistry:
         raise AssertionError("PC info loading must not write registry values")
 
 
+class FailingRegistry(FakeRegistry):
+    def read_value(self, root: str, path: str, name: str) -> object | None:
+        raise OSError("registry read failed")
+
+
 class FakeCommandRunner:
     def __init__(self, output: str = "") -> None:
         self.output = output
@@ -155,6 +160,12 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
         "PEFirmwareType",
         2,
     )
+    registry.set_value(
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "UBR",
+        3323,
+    )
     reader = ControlledWmiPcInfoReader(
         {
             ("Win32_OperatingSystem", None): [
@@ -182,6 +193,7 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
 
     assert pc_info.os_name == "Microsoft Windows 11 Pro"
     assert pc_info.windows_build == "26100"
+    assert pc_info.windows_ubr == "3323"
     assert pc_info.windows_release == "24H2"
     assert pc_info.cpu_name == "Intel Core"
     assert pc_info.memory_gb == 16.0
@@ -228,6 +240,60 @@ def test_wmi_reader_returns_unknowns_when_values_are_missing() -> None:
     assert pc_info.tpm_installed is None
     assert pc_info.secure_boot_status == "Unknown"
     assert pc_info.boot_mode == "Unknown"
+
+
+def test_pc_info_model_windows_ubr_is_optional() -> None:
+    pc_info = PcInfo(
+        computer_name="PC01",
+        user_name="student",
+        os_name="Windows",
+        cpu_name="CPU",
+    )
+
+    assert pc_info.windows_ubr is None
+
+
+def test_wmi_reader_reads_windows_ubr_from_registry_port() -> None:
+    registry = FakeRegistry()
+    registry.set_value(
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "UBR",
+        8655,
+    )
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_OperatingSystem", None): [
+                WmiItem(Caption="Microsoft Windows 11 Pro", BuildNumber="26200", OSArchitecture="64비트")
+            ],
+        },
+        registry=registry,
+    )
+
+    pc_info = reader.read()
+
+    assert pc_info.windows_ubr == "8655"
+    assert (
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "UBR",
+    ) in registry.reads
+
+
+def test_wmi_reader_ignores_windows_ubr_registry_read_failure() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_OperatingSystem", None): [
+                WmiItem(Caption="Microsoft Windows 11 Pro", BuildNumber="26200", OSArchitecture="64비트")
+            ],
+        },
+        registry=FailingRegistry(),
+    )
+
+    pc_info = reader.read()
+
+    assert pc_info.windows_build == "26200"
+    assert pc_info.windows_ubr is None
 
 
 def test_disk_info_can_be_built_from_win32_diskdrive_only() -> None:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
+from skhu_pc_management.presentation.qt.widgets.buttons import repolish
+
 
 class Card(QFrame):
     def __init__(self, title: str | None = None, subtitle: str | None = None, object_name: str = "card") -> None:
@@ -44,7 +46,7 @@ class SummaryCard(Card):
         if accent:
             self.setProperty("accent", accent)
 
-    def set_value(self, value: str, subtitle: str | None = None) -> None:
+    def set_value(self, value: str, subtitle: str | None = None, tone: str | None = None) -> None:
         self.value_label.setText(value)
         if subtitle is not None:
             if self.subtitle_label is None:
@@ -53,6 +55,12 @@ class SummaryCard(Card):
                 self.subtitle_label.setWordWrap(True)
                 self.body_layout.addWidget(self.subtitle_label)
             self.subtitle_label.setText(subtitle)
+        if tone is not None:
+            self.set_tone(tone)
+
+    def set_tone(self, tone: str) -> None:
+        self.setProperty("tone", tone)
+        repolish(self)
 
 
 def card(title: str | None = None, subtitle: str | None = None, object_name: str = "card") -> tuple[QFrame, QVBoxLayout]:

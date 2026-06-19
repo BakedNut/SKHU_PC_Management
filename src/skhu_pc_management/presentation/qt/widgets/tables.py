@@ -29,6 +29,17 @@ def configure_table(table: QTableWidget, stretch_last: bool = True, compact: boo
     table.verticalHeader().setDefaultSectionSize(30 if compact else 36)
 
 
+def set_column_widths(table: QTableWidget, widths: tuple[int, ...], stretch_last: bool = True) -> None:
+    header = table.horizontalHeader()
+    for index, width in enumerate(widths):
+        if index >= table.columnCount():
+            break
+        table.setColumnWidth(index, width)
+        header.setSectionResizeMode(index, QHeaderView.Interactive)
+    if stretch_last and table.columnCount():
+        header.setSectionResizeMode(table.columnCount() - 1, QHeaderView.Stretch)
+
+
 def table_item(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setToolTip(text)

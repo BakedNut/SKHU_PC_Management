@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGridLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
+
+from skhu_pc_management.presentation.qt.widgets.badges import badge_tone_from_status
+from skhu_pc_management.presentation.qt.widgets.buttons import repolish
 
 
 class ReadOnlyField(QLabel):
@@ -9,11 +12,32 @@ class ReadOnlyField(QLabel):
         self.setObjectName("readOnlyField")
         self.setWordWrap(True)
         self.setTextInteractionFlags(self.textInteractionFlags())
+        self.setToolTip(value)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt API override
+        super().setText(text)
+        self.setToolTip(text)
+
+
+class StatusValueField(ReadOnlyField):
+    def __init__(self, value: str = "", tone: str = "neutral") -> None:
+        super().__init__(value)
+        self.setObjectName("statusValueField")
+        self.set_tone(tone)
+
+    def set_tone(self, tone: str) -> None:
+        self.setProperty("tone", tone)
+        repolish(self)
+
+    def set_status(self, text: str, tone: str | None = None) -> None:
+        self.setText(text)
+        self.set_tone(tone or badge_tone_from_status(text))
 
 
 class FieldRow(QWidget):
     def __init__(self, label: str, widget: QWidget, help_text: str | None = None) -> None:
         super().__init__()
+        self.setObjectName("fieldRow")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -31,6 +55,7 @@ class FieldRow(QWidget):
 class FormGrid(QWidget):
     def __init__(self, columns: int = 2) -> None:
         super().__init__()
+        self.setObjectName("formGrid")
         self.columns = max(1, columns)
         self.grid = QGridLayout(self)
         self.grid.setContentsMargins(0, 0, 0, 0)
@@ -45,10 +70,8 @@ class FormGrid(QWidget):
         self._count += 1
 
 
-def read_only_field(value: str = "") -> QLineEdit:
-    widget = QLineEdit(value)
-    widget.setReadOnly(True)
-    return widget
+def read_only_field(value: str = "") -> ReadOnlyField:
+    return ReadOnlyField(value)
 
 
 def field_label(text: str) -> QLabel:

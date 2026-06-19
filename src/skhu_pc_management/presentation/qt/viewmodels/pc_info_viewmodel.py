@@ -36,7 +36,11 @@ class PcInfoViewModel:
             self.user_name = _display_text(pc_info.user_name)
             self.windows_version = _display_text(_join_non_empty(pc_info.os_name, pc_info.windows_release))
             self.windows_version_detail = _display_text(
-                _join_non_empty(pc_info.windows_build, pc_info.windows_architecture)
+                _format_windows_detail(
+                    pc_info.windows_build,
+                    getattr(pc_info, "windows_ubr", None),
+                    pc_info.windows_architecture,
+                )
             )
             self.cpu = _display_text(pc_info.cpu_name)
             self.ram = _format_ram(pc_info)
@@ -90,6 +94,39 @@ def _display_text(value: object | None) -> str:
     if value == "Not installed":
         return "설치되지 않음"
     return str(value)
+
+
+def _format_windows_detail(build: object | None, ubr: object | None, architecture: object | None) -> str:
+    build_text = _clean_text(build)
+    ubr_text = _clean_text(ubr)
+    architecture_text = _normalize_architecture(_clean_text(architecture))
+
+    version_text = ""
+    if build_text and ubr_text:
+        version_text = f"{build_text}.{ubr_text}"
+    elif build_text:
+        version_text = build_text
+
+    if version_text and architecture_text:
+        return f"{version_text} ({architecture_text})"
+    if version_text:
+        return version_text
+    return architecture_text or "알 수 없음"
+
+
+def _clean_text(value: object | None) -> str:
+    if value in (None, "", "Unknown"):
+        return ""
+    return str(value).strip()
+
+
+def _normalize_architecture(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"64-bit", "64 bit", "x64", "amd64", "64비트"}:
+        return "64비트"
+    if normalized in {"32-bit", "32 bit", "x86", "32비트"}:
+        return "32비트"
+    return value
 
 
 def _format_ram(pc_info: Any) -> str:

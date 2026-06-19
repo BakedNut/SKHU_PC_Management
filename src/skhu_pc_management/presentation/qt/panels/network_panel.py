@@ -20,7 +20,7 @@ from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import Netw
 from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, secondary_button, subtle_button
 from skhu_pc_management.presentation.qt.widgets.forms import FieldRow
 from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SummaryCard
-from skhu_pc_management.presentation.qt.widgets.tables import configure_table, table_item
+from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths, table_item
 
 
 class NetworkPanel(QWidget):
@@ -58,7 +58,9 @@ class NetworkPanel(QWidget):
         self.current_table = QTableWidget(0, 2)
         self.current_table.setHorizontalHeaderLabels(["항목", "값"])
         configure_table(self.current_table, compact=True)
-        self.current_table.setMinimumHeight(360)
+        set_column_widths(self.current_table, (140,))
+        self.current_table.setMinimumHeight(260)
+        self.current_table.setMaximumHeight(320)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -66,6 +68,7 @@ class NetworkPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = QWidget()
+        content.setObjectName("scrollContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
@@ -118,6 +121,7 @@ class NetworkPanel(QWidget):
     def _config_card(self) -> QWidget:
         card = Card("IP 구성")
         form_container = QWidget()
+        form_container.setObjectName("transparentContainer")
         form_container.setMaximumWidth(620)
         grid = QGridLayout(form_container)
         grid.setContentsMargins(0, 0, 0, 0)

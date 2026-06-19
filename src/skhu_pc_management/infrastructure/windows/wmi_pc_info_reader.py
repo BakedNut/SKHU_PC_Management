@@ -26,6 +26,7 @@ class WmiPcInfoReader:
             user_name=self._get_user_name(),
             os_name=os_info["caption"],
             windows_build=os_info["build"],
+            windows_ubr=os_info["ubr"],
             windows_architecture=os_info["architecture"],
             windows_release=os_info["release"],
             cpu_name=self._get_first_wmi_value("Win32_Processor", "Name"),
@@ -59,12 +60,28 @@ class WmiPcInfoReader:
         build = _to_string(_get_value(os_item, "BuildNumber"))
         architecture = _to_string(_get_value(os_item, "OSArchitecture"))
         release = _windows_release(caption, build)
+        ubr = self._get_windows_ubr()
         return {
             "caption": caption,
             "build": build,
+            "ubr": ubr,
             "architecture": architecture,
             "release": release,
         }
+
+    def _get_windows_ubr(self) -> str | None:
+        if self.registry is None:
+            return None
+        try:
+            return _to_string(
+                self.registry.read_value(
+                    "HKEY_LOCAL_MACHINE",
+                    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+                    "UBR",
+                )
+            )
+        except Exception:
+            return None
 
     def _get_first_wmi_value(self, wmi_class: str, property_name: str) -> str:
         value = _get_value(self._first_wmi_item(wmi_class), property_name)
