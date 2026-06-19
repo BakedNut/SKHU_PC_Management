@@ -21,16 +21,17 @@ from PySide6.QtWidgets import (
 
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
+from skhu_pc_management.presentation.qt.maintenance_confirmations import maintenance_confirmation_for
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
 from skhu_pc_management.presentation.qt.widgets.buttons import (
-    danger_button,
     primary_button,
     secondary_button,
     set_button_role,
     subtle_button,
+    warning_button,
 )
 from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SectionCard, SummaryCard
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, status_item, table_item
@@ -107,10 +108,10 @@ class ActionCenterPanel(QWidget):
         self._danger_buttons: list[QPushButton] = []
 
         self.refresh_status_button = primary_button("상태 새로고침")
-        self.windows_summary = SummaryCard("Windows 대상", "Win 11")
-        self.office_summary = SummaryCard("Office 상태", "미확인")
-        self.power_summary = SummaryCard("전원 옵션", "미확인")
-        self.shutdown_summary = SummaryCard("자동 종료", "미확인")
+        self.settings_summary = SummaryCard("설정 상태", "상태 확인 필요")
+        self.pc_check_summary = SummaryCard("PC 점검", "점검 필요")
+        self.office_summary = SummaryCard("Office", "미확인")
+        self.classroom_summary = SummaryCard("강의실 정책", "미확인")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -144,16 +145,15 @@ class ActionCenterPanel(QWidget):
         title_column.addWidget(subtitle)
         row.addLayout(title_column)
         row.addStretch()
-        row.addWidget(self.refresh_status_button)
         return row
 
     def _summary_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(12)
-        row.addWidget(self.windows_summary)
+        row.addWidget(self.settings_summary)
+        row.addWidget(self.pc_check_summary)
         row.addWidget(self.office_summary)
-        row.addWidget(self.power_summary)
-        row.addWidget(self.shutdown_summary)
+        row.addWidget(self.classroom_summary)
         return row
 
     def _body_layout(self) -> QHBoxLayout:
@@ -161,6 +161,7 @@ class ActionCenterPanel(QWidget):
         body.setSpacing(14)
         left = QVBoxLayout()
         left.setSpacing(14)
+        left.addWidget(self._recommended_actions_card())
         left.addWidget(self._activation_card())
         left.addWidget(self._settings_card())
         left.addWidget(self._quick_tools_card())
@@ -173,6 +174,22 @@ class ActionCenterPanel(QWidget):
         body.addLayout(left, 3)
         body.addLayout(right, 2)
         return body
+
+    def _recommended_actions_card(self) -> QWidget:
+        card = Card("권장 조치", "현재 상태 요약을 기준으로 먼저 확인할 항목을 안내합니다.")
+        self.recommended_action_label = QLabel("상태 새로고침을 실행해 현재 상태를 확인하세요.")
+        self.recommended_action_label.setObjectName("mutedText")
+        self.recommended_action_label.setWordWrap(True)
+        card.body_layout.addWidget(self.recommended_action_label)
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.refresh_status_button)
+        self.recommended_apply_button = secondary_button("선택한 설정 적용")
+        self.recommended_apply_button.clicked.connect(self._apply_settings)
+        button_row.addWidget(self.recommended_apply_button)
+        button_row.addStretch()
+        card.body_layout.addLayout(button_row)
+        return card
 
     def _activation_card(self) -> QWidget:
         card = Card("인증", "제품키는 화면에 표시하지 않고 클립보드 복사와 실행 준비만 수행합니다.")
@@ -245,8 +262,11 @@ class ActionCenterPanel(QWidget):
         self.select_all_button = subtle_button("모두 선택")
         self.deselect_all_button = subtle_button("모두 해제")
         self.apply_settings_button = primary_button("선택한 설정 적용")
+        self.selected_count_label = QLabel("선택 0개")
+        self.selected_count_label.setObjectName("mutedText")
         button_row.addWidget(self.select_all_button)
         button_row.addWidget(self.deselect_all_button)
+        button_row.addWidget(self.selected_count_label)
         button_row.addStretch()
         button_row.addWidget(self.apply_settings_button)
         card.body_layout.addLayout(button_row)
@@ -263,6 +283,7 @@ class ActionCenterPanel(QWidget):
                     checkbox.setEnabled(False)
                 else:
                     self._checkboxes[option.setting_id] = checkbox
+                    checkbox.toggled.connect(self._update_selected_count)
                 if option.win11_only:
                     self._win11_only_checkboxes.append(checkbox)
                     badge = StatusBadge("Win11 전용", "info")
@@ -280,6 +301,7 @@ class ActionCenterPanel(QWidget):
         self.select_all_button.clicked.connect(self._select_all)
         self.deselect_all_button.clicked.connect(self._deselect_all)
         self.apply_settings_button.clicked.connect(self._apply_settings)
+        self._update_selected_count()
         return card
 
     def _quick_tools_card(self) -> QWidget:
@@ -288,19 +310,20 @@ class ActionCenterPanel(QWidget):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
         actions = (
-            ("휴지통 비우기", "정리 작업", lambda: self._run_maintenance("empty_recycle_bin"), "danger"),
+            ("휴지통 비우기", "정리 작업", lambda: self._run_maintenance("empty_recycle_bin"), "warning"),
             ("Chrome 실행", "브라우저 실행", lambda: self._launch_program("chrome"), "secondary"),
             ("Edge 실행", "브라우저 실행", lambda: self._launch_program("edge"), "secondary"),
             ("팟플레이어 실행", "동영상 플레이어", lambda: self._launch_program("potplayer"), "secondary"),
             ("반디집 실행", "압축 프로그램", lambda: self._launch_program("bandizip"), "secondary"),
-            ("Chrome 기록 삭제", "사용자 데이터 삭제", lambda: self._run_maintenance("delete_chrome_history"), "danger"),
-            ("Edge 기록 삭제", "사용자 데이터 삭제", lambda: self._run_maintenance("delete_edge_history"), "danger"),
+            ("Chrome 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_chrome_history"), "danger"),
+            ("Edge 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_edge_history"), "danger"),
         )
         for index, (label, description, callback, role) in enumerate(actions):
             button = QPushButton(f"{label}\n{description}")
             set_button_role(button, role)
             button.clicked.connect(callback)
             if role == "danger":
+                button.setToolTip("User Data 전체 폴더를 삭제합니다. 로그인 세션, 확장 프로그램 설정 등이 삭제될 수 있습니다.")
                 self._danger_buttons.append(button)
             grid.addWidget(button, index // 3, index % 3)
         card.body_layout.addLayout(grid)
@@ -308,8 +331,8 @@ class ActionCenterPanel(QWidget):
 
     def _settings_status_card(self) -> QWidget:
         card = Card("시스템 설정 적용 상태")
-        self.settings_table = QTableWidget(0, 2)
-        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "상태"])
+        self.settings_table = QTableWidget(0, 4)
+        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "적용 결과", "현재 상태", "상세"])
         configure_table(self.settings_table, compact=True)
         self.settings_table.setMinimumHeight(260)
         card.body_layout.addWidget(self.settings_table)
@@ -328,8 +351,8 @@ class ActionCenterPanel(QWidget):
         card = Card("강의실 PC 전용 작업")
         self.power_status_label = StatusBadge("미확인", "neutral")
         self.shutdown_status_label = StatusBadge("미확인", "neutral")
-        self.power_apply_button = secondary_button("전원 옵션 '안 함' 적용")
-        self.shutdown_apply_button = secondary_button("23시 자동종료 적용")
+        self.power_apply_button = warning_button("전원 옵션 '안 함' 적용")
+        self.shutdown_apply_button = warning_button("23시 자동종료 적용")
         card.body_layout.addWidget(
             self._action_row("전원 옵션", "화면 끄기/절전/최대 절전을 안 함으로 설정합니다.", self.power_status_label, self.power_apply_button)
         )
@@ -369,9 +392,15 @@ class ActionCenterPanel(QWidget):
         self.settings_table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             name = row[0] if row else ""
-            status = row[1] if len(row) > 1 else ""
+            apply_status = row[1] if len(row) > 1 else ""
+            current_status = row[2] if len(row) > 2 else ""
+            detail = row[3] if len(row) > 3 else ""
             self.settings_table.setItem(row_index, 0, table_item(name))
-            self.settings_table.setItem(row_index, 1, status_item(status))
+            self.settings_table.setItem(row_index, 1, status_item(apply_status))
+            self.settings_table.setItem(row_index, 2, status_item(current_status))
+            detail_item = table_item(detail)
+            detail_item.setToolTip(detail)
+            self.settings_table.setItem(row_index, 3, detail_item)
 
     def _render_pc_check_rows(self) -> None:
         rows = self._pc_check.result_rows
@@ -379,6 +408,7 @@ class ActionCenterPanel(QWidget):
         for row_index, row in enumerate(rows):
             for column_index, value in enumerate(row):
                 item = status_item(value) if column_index == 1 else table_item(value)
+                item.setToolTip(value)
                 self.pc_check_table.setItem(row_index, column_index, item)
 
     def set_detected_windows_text(self, value: str) -> None:
@@ -391,10 +421,16 @@ class ActionCenterPanel(QWidget):
         for checkbox in self._checkboxes.values():
             if checkbox.isEnabled():
                 checkbox.setChecked(True)
+        self._update_selected_count()
 
     def _deselect_all(self) -> None:
         for checkbox in self._checkboxes.values():
             checkbox.setChecked(False)
+        self._update_selected_count()
+
+    def _update_selected_count(self) -> None:
+        if hasattr(self, "selected_count_label"):
+            self.selected_count_label.setText(f"선택 {len(self._selected_setting_ids())}개")
 
     def _apply_settings(self) -> None:
         if self._test_mode:
@@ -456,14 +492,33 @@ class ActionCenterPanel(QWidget):
                 checkbox.setChecked(False)
 
     def _sync_status_summaries(self) -> None:
-        windows_target = "Win 11" if self.win11_radio.isChecked() else "Win 10"
-        self.windows_summary.set_value(windows_target, self.detected_windows_label.text())
+        self.settings_summary.set_value(self._settings.summary_text)
+        self.pc_check_summary.set_value(self._pc_check.summary_text)
         self.office_summary.set_value(self._pc_check.installed_office_status_text)
-        self.power_summary.set_value(self._pc_check.power_option_status_text)
-        self.shutdown_summary.set_value(self._pc_check.auto_shutdown_status_text)
+        self.classroom_summary.set_value(
+            f"전원: {self._pc_check.power_option_status_text}",
+            f"자동 종료: {self._pc_check.auto_shutdown_status_text}",
+        )
         self.power_status_label.set_status(self._pc_check.power_option_status_text, badge_tone_from_status(self._pc_check.power_option_status_text))
         self.shutdown_status_label.set_status(self._pc_check.auto_shutdown_status_text, badge_tone_from_status(self._pc_check.auto_shutdown_status_text))
         self.office_status_label.setText(f"설치된 Office 상태: {self._pc_check.installed_office_status_text}")
+        self.recommended_action_label.setText(self._recommended_action_text())
+
+    def _recommended_action_text(self) -> str:
+        actions: list[str] = []
+        if self._settings.warning_count:
+            actions.append(f"기본 설정 {self._settings.warning_count}개 항목의 현재 상태를 확인하세요.")
+        if self._pc_check.error_count or self._pc_check.warning_count:
+            actions.append(
+                f"PC 점검 결과 오류 {self._pc_check.error_count}개, 주의 {self._pc_check.warning_count}개가 있습니다."
+            )
+        power_text = self._pc_check.power_option_status_text
+        shutdown_text = self._pc_check.auto_shutdown_status_text
+        if "주의" in power_text or "확인" in power_text:
+            actions.append("전원 옵션 상태를 확인하세요.")
+        if "등록되어 있지" in shutdown_text or "올바르지" in shutdown_text or "확인" in shutdown_text:
+            actions.append("23시 자동종료 스케줄 상태를 확인하세요.")
+        return "\n".join(actions) if actions else "현재 표시된 주요 상태가 정상 범위입니다."
 
     def _launch_program(self, program_id: str) -> None:
         if self._launch_program_use_case is None:
@@ -482,6 +537,8 @@ class ActionCenterPanel(QWidget):
     def _run_maintenance(self, action: str) -> None:
         if self._maintenance_use_case is None:
             QMessageBox.information(self, "미구성", "PC 유지보수 기능이 구성되지 않았습니다.")
+            return
+        if not self._confirm_maintenance_action(action):
             return
         if self._busy_coordinator and not self._busy_coordinator.try_begin("PC 유지보수 작업을 실행하는 중..."):
             return
@@ -504,6 +561,10 @@ class ActionCenterPanel(QWidget):
             if self._busy_coordinator:
                 self._busy_coordinator.end("작업이 완료되었습니다.")
 
+    def _confirm_maintenance_action(self, action: str) -> bool:
+        confirmation = maintenance_confirmation_for(action)
+        return QMessageBox.question(self, confirmation.title, confirmation.message) == QMessageBox.Yes
+
     def _refresh_after_action(self) -> None:
         self._settings.check_status(self._settings.all_setting_ids())
         self._pc_check.run_checks()
@@ -522,6 +583,7 @@ class ActionCenterPanel(QWidget):
             return
         for button in (
             self.apply_settings_button,
+            self.recommended_apply_button,
             self.windows_activation_button,
             self.office_activation_button,
             self.power_apply_button,

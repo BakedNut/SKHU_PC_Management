@@ -35,6 +35,21 @@ class FakeCommandRunner:
         return ""
 
 
+class FakeTaskbarLayoutUseCase:
+    def __init__(self) -> None:
+        self.dry_run_requests: list[bool] = []
+
+    def execute(self, dry_run: bool = True):
+        from skhu_pc_management.domain.resources.models import TaskbarApplyResult
+
+        self.dry_run_requests.append(dry_run)
+        return TaskbarApplyResult(
+            success=True,
+            message="작업표시줄 설정 dry-run이 완료되었습니다. 실제 변경은 수행하지 않았습니다.",
+            dry_run=dry_run,
+        )
+
+
 def test_default_setting_definitions_are_loaded() -> None:
     setting_ids = {definition.setting_id for definition in DEFAULT_SETTING_DEFINITIONS}
 
@@ -118,5 +133,25 @@ def test_unknown_setting_id_returns_failure_result() -> None:
     assert result.is_success is False
     assert result.results[0].status == "failed"
     assert "Unknown setting id" in result.results[0].message
+    assert registry.writes == []
+    assert command_runner.commands == []
+
+
+def test_taskbar_setting_uses_dry_run_only() -> None:
+    taskbar_use_case = FakeTaskbarLayoutUseCase()
+    registry = FakeRegistry()
+    command_runner = FakeCommandRunner()
+    use_case = ApplySettings(
+        registry,
+        command_runner,
+        apply_taskbar_layout_use_case=taskbar_use_case,
+    )
+
+    result = use_case.execute(["set_taskbar_icons"])
+
+    assert result.is_success is True
+    assert taskbar_use_case.dry_run_requests == [True]
+    assert "dry-run" in result.results[0].message
+    assert "실제 변경" in result.results[0].message
     assert registry.writes == []
     assert command_runner.commands == []

@@ -53,3 +53,27 @@ class SummaryCard(Card):
                 self.subtitle_label.setWordWrap(True)
                 self.body_layout.addWidget(self.subtitle_label)
             self.subtitle_label.setText(subtitle)
+
+
+def card(title: str | None = None, subtitle: str | None = None, object_name: str = "card") -> tuple[QFrame, QVBoxLayout]:
+    frame = Card(title, subtitle, object_name)
+    return frame, frame.body_layout
+
+
+def summary_card(title: str, value: str, subtitle: str | None = None, tone: str = "neutral") -> QFrame:
+    frame = SummaryCard(title, value, subtitle)
+    frame.setProperty("tone", tone)
+    return frame
+
+
+def info_banner(message: str, tone: str = "info") -> QFrame:
+    frame = QFrame()
+    frame.setObjectName("warningBanner" if tone == "warning" else "infoBanner")
+    frame.setProperty("tone", tone)
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(12, 8, 12, 8)
+    label = QLabel(message)
+    label.setObjectName("mutedText")
+    label.setWordWrap(True)
+    layout.addWidget(label)
+    return frame

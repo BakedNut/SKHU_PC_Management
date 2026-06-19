@@ -35,7 +35,7 @@ class RunPcChecks:
                         label=label,
                         category=CheckCategory.PROGRAM,
                         status=CheckStatus.ERROR,
-                        message=str(exc),
+                        message=f"점검 실행 중 오류가 발생했습니다: {exc}",
                     )
                 )
         return results
@@ -56,7 +56,7 @@ class InstalledProgramCheck:
                 label=self.label,
                 category=CheckCategory.PROGRAM,
                 status=CheckStatus.WARNING,
-                message="Not installed.",
+                message=f"{self.label} 항목이 설치되어 있지 않습니다.",
             )
 
         return CheckResult(
@@ -64,8 +64,8 @@ class InstalledProgramCheck:
             label=self.label,
             category=CheckCategory.PROGRAM,
             status=CheckStatus.OK,
-            message="Installed.",
-            detail=program.version,
+            message="설치되어 있습니다.",
+            detail=program.version or "버전 정보 없음",
             raw_value=program,
         )
 
@@ -153,7 +153,7 @@ class OfficeInstallCheck:
                 label="Office 설치 확인",
                 category=CheckCategory.OFFICE,
                 status=CheckStatus.WARNING,
-                message="Office 2021 or 2024 is not installed.",
+                message="Office 2021 또는 2024가 설치되어 있지 않습니다.",
             )
 
         is_recommended = "2021" in office_name or "2024" in office_name
@@ -162,7 +162,7 @@ class OfficeInstallCheck:
             label="Office 설치 확인",
             category=CheckCategory.OFFICE,
             status=CheckStatus.OK if is_recommended else CheckStatus.WARNING,
-            message="Recommended Office version installed." if is_recommended else "Unsupported Office version installed.",
+            message="권장 Office 버전이 설치되어 있습니다." if is_recommended else "권장하지 않는 Office 버전이 설치되어 있습니다.",
             detail=office_name,
             raw_value=office_name,
         )
@@ -266,7 +266,7 @@ class RecycleBinCheck:
                 label="휴지통 상태",
                 category=CheckCategory.RECYCLE_BIN,
                 status=CheckStatus.UNKNOWN,
-                message="Recycle bin status could not be read.",
+                message="휴지통 상태를 읽을 수 없습니다.",
                 raw_value=status,
             )
 
@@ -275,8 +275,8 @@ class RecycleBinCheck:
             label="휴지통 상태",
             category=CheckCategory.RECYCLE_BIN,
             status=CheckStatus.OK if status.is_empty else CheckStatus.WARNING,
-            message="Recycle bin is empty." if status.is_empty else "Recycle bin contains items.",
-            detail=None if status.item_count is None else f"{status.item_count} items",
+            message="휴지통이 비어 있습니다." if status.is_empty else "휴지통에 항목이 있습니다.",
+            detail=None if status.item_count is None else f"{status.item_count}개 항목",
             raw_value=status,
         )
 
@@ -296,7 +296,7 @@ class BrowserHistoryCheck:
                 label=self.label,
                 category=CheckCategory.BROWSER_HISTORY,
                 status=CheckStatus.UNKNOWN,
-                message="Browser data path was not found.",
+                message="브라우저 사용자 데이터 경로를 확인할 수 없습니다.",
                 raw_value=status,
             )
 

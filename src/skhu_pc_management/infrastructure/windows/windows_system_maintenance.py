@@ -25,22 +25,28 @@ class WindowsSystemMaintenance:
         shell32.SHEmptyRecycleBinW.restype = ctypes.c_int
         return int(shell32.SHEmptyRecycleBinW(None, None, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND))
 
-    def delete_browser_history(self, browser_id: str) -> bool:
+    def delete_browser_history(self, browser_id: str) -> str:
+        return self.reset_browser_user_data(browser_id)
+
+    def reset_browser_user_data(self, browser_id: str) -> str:
         browser_id = browser_id.lower()
+        browser_name = "Chrome" if browser_id == "chrome" else "Edge"
         if browser_id == "chrome":
             self._kill_processes(("chrome.exe",))
-            root = Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data"
         elif browser_id == "edge":
             self._kill_processes(("msedge.exe", "msedgewebview2.exe"))
-            root = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data"
         else:
             raise ValueError(f"Unsupported browser id: {browser_id}")
 
+        root = _browser_user_data_root(browser_id)
         time.sleep(2)
         if not root.exists():
-            return True
+            return f"{browser_name} 사용자 데이터 폴더가 없어 초기화할 항목이 없습니다."
+
+        # Intentional policy: reset the whole browser User Data root, not only
+        # History files. This can remove sessions, extensions, and settings.
         shutil.rmtree(root)
-        return True
+        return f"{browser_name} 사용자 데이터 초기화가 완료되었습니다. 방문 기록, 로그인 세션, 확장 프로그램 설정 등이 삭제될 수 있습니다."
 
     def set_power_never(self) -> bool:
         for command in (
@@ -71,3 +77,12 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Pr
                 self.command_runner.run(("taskkill", "/F", "/IM", image_name, "/T"))
             except Exception:
                 pass
+
+
+def _browser_user_data_root(browser_id: str) -> Path:
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", ""))
+    if browser_id == "chrome":
+        return local_app_data / "Google" / "Chrome" / "User Data"
+    if browser_id == "edge":
+        return local_app_data / "Microsoft" / "Edge" / "User Data"
+    raise ValueError(f"Unsupported browser id: {browser_id}")

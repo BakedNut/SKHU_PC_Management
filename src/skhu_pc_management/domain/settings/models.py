@@ -45,3 +45,4 @@ class SettingStatus:
     name: str = ""
     is_applied: bool = False
     current_value: str | None = None
+    detail: str = ""

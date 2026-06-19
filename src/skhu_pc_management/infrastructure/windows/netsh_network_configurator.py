@@ -25,6 +25,20 @@ class NetshNetworkConfigurator:
         return self._list_adapters_with_netsh()
 
     def _list_adapters_with_powershell(self) -> list[NetworkAdapterInfo]:
+        detailed_output = self.command_runner.run(
+            (
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                _POWERSHELL_DETAILED_ADAPTER_SCRIPT,
+            )
+        )
+        detailed_adapters = _parse_powershell_detailed_adapters(detailed_output)
+        if detailed_adapters:
+            return detailed_adapters
+
         output = self.command_runner.run(
             (
                 "powershell",
@@ -227,6 +241,21 @@ def _parse_powershell_adapters(output: str) -> list[NetworkAdapterInfo]:
     return sorted(adapters, key=lambda adapter: (_status_sort_key(adapter), adapter.name.lower()))
 
 
+def _parse_powershell_detailed_adapters(output: str) -> list[NetworkAdapterInfo]:
+    if not output.strip():
+        return []
+    data = json.loads(output)
+    items = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
+    adapters: list[NetworkAdapterInfo] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        adapter = _detailed_adapter_from_powershell_item(item)
+        if adapter is not None:
+            adapters.append(adapter)
+    return sorted(adapters, key=lambda adapter: (_status_sort_key(adapter), adapter.name.lower()))
+
+
 def _adapter_from_powershell_item(item: dict[str, Any]) -> NetworkAdapterInfo | None:
     name = str(item.get("Name") or "").strip()
     description = str(item.get("InterfaceDescription") or name).strip()
@@ -243,6 +272,29 @@ def _adapter_from_powershell_item(item: dict[str, Any]) -> NetworkAdapterInfo | 
         description=description,
         is_enabled=status.lower() == "up",
         mac_address=mac_address,
+    )
+
+
+def _detailed_adapter_from_powershell_item(item: dict[str, Any]) -> NetworkAdapterInfo | None:
+    base = _adapter_from_powershell_item(item)
+    if base is None:
+        return None
+    ip_addresses = tuple(value for value in _string_list(item.get("IPv4Addresses")) if _looks_like_ip(value))
+    prefix_length = _first_int(item.get("IPv4PrefixLength"))
+    subnet_mask = _prefix_length_to_subnet_mask(prefix_length) if prefix_length is not None else None
+    gateways = _string_list(item.get("IPv4DefaultGateway"))
+    dns_servers = tuple(value for value in _string_list(item.get("DnsServers")) if _looks_like_ip(value))
+    dhcp_value = item.get("Dhcp")
+    return NetworkAdapterInfo(
+        name=base.name,
+        description=base.description,
+        is_enabled=base.is_enabled,
+        mac_address=base.mac_address,
+        ip_addresses=ip_addresses,
+        subnet_mask=subnet_mask,
+        gateway=gateways[0] if gateways else None,
+        dns_servers=dns_servers,
+        is_dhcp_enabled=_parse_boolish(dhcp_value),
     )
 
 
@@ -305,6 +357,42 @@ def _looks_like_ip(value: str) -> bool:
     return value.count(".") == 3 and all(part.isdigit() for part in value.split("."))
 
 
+def _string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _first_int(value: object) -> int | None:
+    if isinstance(value, list):
+        value = value[0] if value else None
+    try:
+        return int(value) if value is not None and str(value).strip() else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_boolish(value: object) -> bool | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"true", "enabled", "yes", "예", "사용", "사용함"}:
+        return True
+    if text in {"false", "disabled", "no", "아니요", "사용 안 함"}:
+        return False
+    return None
+
+
+def _prefix_length_to_subnet_mask(prefix_length: int) -> str:
+    if not 0 <= prefix_length <= 32:
+        raise ValueError(f"Invalid IPv4 prefix length: {prefix_length}")
+    mask = (0xFFFFFFFF << (32 - prefix_length)) & 0xFFFFFFFF
+    return ".".join(str((mask >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+
 _IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
@@ -348,3 +436,25 @@ def _is_preferred_adapter_name(name: str) -> bool:
 
 def _status_sort_key(adapter: NetworkAdapterInfo) -> int:
     return 0 if adapter.is_enabled else 1
+
+
+_POWERSHELL_DETAILED_ADAPTER_SCRIPT = r"""
+$adapters = Get-NetAdapter | Select-Object Name, InterfaceDescription, Status, MacAddress
+$items = foreach ($adapter in $adapters) {
+    $ipConfig = Get-NetIPConfiguration -InterfaceAlias $adapter.Name -ErrorAction SilentlyContinue
+    $dns = Get-DnsClientServerAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue
+    $ipInterface = Get-NetIPInterface -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+    [PSCustomObject]@{
+        Name = $adapter.Name
+        InterfaceDescription = $adapter.InterfaceDescription
+        Status = $adapter.Status
+        MacAddress = $adapter.MacAddress
+        IPv4Addresses = @($ipConfig.IPv4Address.IPAddress)
+        IPv4PrefixLength = @($ipConfig.IPv4Address.PrefixLength)
+        IPv4DefaultGateway = @($ipConfig.IPv4DefaultGateway.NextHop)
+        DnsServers = @($dns.ServerAddresses)
+        Dhcp = $ipInterface.Dhcp
+    }
+}
+$items | ConvertTo-Json -Depth 5
+""".strip()

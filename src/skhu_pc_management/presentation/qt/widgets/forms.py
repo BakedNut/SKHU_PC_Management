@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
 
 class ReadOnlyField(QLabel):
@@ -43,3 +43,33 @@ class FormGrid(QWidget):
         column = self._count % self.columns
         self.grid.addWidget(FieldRow(label, widget, help_text), row, column)
         self._count += 1
+
+
+def read_only_field(value: str = "") -> QLineEdit:
+    widget = QLineEdit(value)
+    widget.setReadOnly(True)
+    return widget
+
+
+def field_label(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("fieldLabel")
+    return label
+
+
+def muted_text(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("mutedText")
+    label.setWordWrap(True)
+    return label
+
+
+def add_field(
+    grid: QGridLayout,
+    row: int,
+    label: str,
+    widget: QWidget,
+    column: int = 0,
+    colspan: int = 1,
+) -> None:
+    grid.addWidget(FieldRow(label, widget), row, column, 1, colspan)

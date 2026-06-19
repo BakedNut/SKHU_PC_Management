@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from typing import Any
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, StaticIpConfig
@@ -79,6 +80,18 @@ class NetworkViewModel:
         if self.is_busy:
             self.status_message = "다른 작업이 진행 중입니다."
             return
+        is_valid, validation_message = self.validate_static_ip_fields(
+            adapter_name,
+            ip_address,
+            subnet_mask,
+            gateway,
+            dns1,
+            dns2,
+        )
+        if not is_valid:
+            self.validation_message = validation_message
+            self.status_message = f"입력 오류: {validation_message}"
+            return
         self.is_busy = True
         self.status_message = "정적 IP를 적용하는 중입니다..."
         try:
@@ -93,6 +106,8 @@ class NetworkViewModel:
             self.validation_message = ""
             result = self.apply_static_ip_use_case.execute(config)
             self.status_message = result.message if result.success else f"정적 IP 적용 실패: {result.message}"
+            if result.success:
+                self._reload_after_network_change(adapter_name)
         except Exception as exc:
             self.validation_message = str(exc)
             self.status_message = f"입력 오류: {exc}"
@@ -128,10 +143,43 @@ class NetworkViewModel:
         try:
             result = self.set_dhcp_use_case.execute(adapter_name)
             self.status_message = result.message if result.success else f"DHCP 전환 실패: {result.message}"
+            if result.success:
+                self._reload_after_network_change(adapter_name)
         except Exception as exc:
             self.status_message = f"DHCP 전환 실패: {exc}"
         finally:
             self.is_busy = False
+
+    def validate_static_ip_fields(
+        self,
+        adapter_name: str,
+        ip_address: str,
+        subnet_mask: str,
+        gateway: str,
+        dns1: str,
+        dns2: str,
+    ) -> tuple[bool, str]:
+        if not adapter_name.strip():
+            return False, "어댑터를 선택하세요."
+        for label, value in (("IP 주소", ip_address), ("서브넷 마스크", subnet_mask), ("기본 게이트웨이", gateway)):
+            ok, message = _validate_ip_text(label, value)
+            if not ok:
+                return False, message
+        if dns2.strip() and not dns1.strip():
+            return False, "보조 DNS를 입력하려면 기본 DNS를 먼저 입력하세요."
+        for label, value in (("기본 DNS", dns1), ("보조 DNS", dns2)):
+            if value.strip():
+                ok, message = _validate_ip_text(label, value)
+                if not ok:
+                    return False, message
+        return True, ""
+
+    def _reload_after_network_change(self, adapter_name: str) -> None:
+        try:
+            self.adapters = self.list_network_adapters_use_case.execute()
+            self.select_adapter_by_name(adapter_name)
+        except Exception as exc:
+            self.status_message = f"{self.status_message} 상태 재조회 실패: {exc}"
 
 
 def _dhcp_text(value: bool | None) -> str:
@@ -140,3 +188,16 @@ def _dhcp_text(value: bool | None) -> str:
     if value is False:
         return "수동 IP"
     return "알 수 없음"
+
+
+def _validate_ip_text(label: str, value: str) -> tuple[bool, str]:
+    text = value.strip()
+    if not text:
+        return False, f"{label}을 입력하세요."
+    if text.endswith(".") or text.count(".") != 3:
+        return False, f"{label} 형식이 올바르지 않습니다. IP 주소의 마지막 값을 입력하세요."
+    try:
+        ip_address(text)
+    except ValueError:
+        return False, f"{label} 형식이 올바르지 않습니다."
+    return True, ""

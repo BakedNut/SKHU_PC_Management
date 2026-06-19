@@ -14,6 +14,30 @@ class PcCheckViewModel:
     auto_shutdown_status_text: str = "미확인"
     is_busy: bool = False
 
+    @property
+    def warning_count(self) -> int:
+        return sum(1 for _, status, _ in self.result_rows if status == "주의")
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for _, status, _ in self.result_rows if status == "오류")
+
+    @property
+    def unknown_count(self) -> int:
+        return sum(1 for _, status, _ in self.result_rows if status == "알 수 없음")
+
+    @property
+    def summary_text(self) -> str:
+        if not self.result_rows:
+            return "점검 필요"
+        if self.error_count:
+            return f"오류 {self.error_count}개"
+        if self.warning_count:
+            return f"주의 {self.warning_count}개"
+        if self.unknown_count:
+            return f"확인 불가 {self.unknown_count}개"
+        return "모든 항목 정상"
+
     def run_checks(self) -> None:
         if self.is_busy:
             self.status_message = "다른 작업이 진행 중입니다."

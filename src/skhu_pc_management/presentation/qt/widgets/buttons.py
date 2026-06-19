@@ -13,6 +13,11 @@ def set_button_role(button: QWidget, role: str) -> None:
     repolish(button)
 
 
+def set_selected(button: QWidget, selected: bool) -> None:
+    button.setProperty("selected", "true" if selected else "false")
+    repolish(button)
+
+
 def _button(text: str, role: str) -> QPushButton:
     button = QPushButton(text)
     set_button_role(button, role)

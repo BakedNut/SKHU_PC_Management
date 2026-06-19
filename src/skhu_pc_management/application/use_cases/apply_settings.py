@@ -67,6 +67,9 @@ class ApplySettings:
             result = self._apply_definition(definition)
             results.append(result)
 
+            if definition.setting_id == "set_taskbar_icons":
+                continue
+
             if result.success and definition.requires_user_parameter_update:
                 should_update_user_parameters = True
             if result.success and definition.requires_explorer_restart:
@@ -101,7 +104,7 @@ class ApplySettings:
                     status="failed",
                     message="작업표시줄 설정 적용 기능이 구성되지 않았습니다.",
                 )
-            result = self.apply_taskbar_layout_use_case.execute(dry_run=False)
+            result = self.apply_taskbar_layout_use_case.execute(dry_run=True)
             return ApplyResult(
                 setting_id=definition.setting_id,
                 name=definition.name,

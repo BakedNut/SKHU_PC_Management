@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from skhu_pc_management.application.use_cases.check_settings_status import CheckSettingsStatus
 from skhu_pc_management.domain.settings.definitions import HKCU, HKLM
+from skhu_pc_management.domain.settings.models import SettingStatus
 
 
 class FakeRegistry:
@@ -141,4 +142,35 @@ def test_registry_read_failure_returns_unknown_status() -> None:
 
     assert status.is_configured is False
     assert status.severity == "unknown"
-    assert status.status_text == "Read failed: boom"
+    assert status.status_text == "read_failed"
+    assert "레지스트리 값을 읽을 수 없습니다" in status.detail
+
+
+def test_provider_is_used_for_non_registry_setting() -> None:
+    class FakeProvider:
+        def check(self, setting_id: str) -> SettingStatus:
+            return SettingStatus(
+                setting_id=setting_id,
+                label="작업표시줄 아이콘 설정",
+                is_configured=True,
+                severity="ok",
+                status_text="configured",
+                detail="provider detail",
+            )
+
+    use_case = CheckSettingsStatus(FakeRegistry(), setting_status_providers={"set_taskbar_icons": FakeProvider()})
+
+    status = use_case.execute(["set_taskbar_icons"])[0]
+
+    assert status.is_configured is True
+    assert status.detail == "provider detail"
+
+
+def test_non_registry_setting_without_provider_returns_korean_missing_status() -> None:
+    use_case = CheckSettingsStatus(FakeRegistry())
+
+    status = use_case.execute(["set_taskbar_icons"])[0]
+
+    assert status.status_text == "status_provider_missing"
+    assert status.detail == "상태 확인 구현 필요"
+    assert "No registry-backed" not in status.detail

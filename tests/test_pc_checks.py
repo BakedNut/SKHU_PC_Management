@@ -167,7 +167,7 @@ def test_run_pc_checks_keeps_running_when_one_check_fails() -> None:
     results = RunPcChecks(checks).execute()
 
     assert results[0].status == CheckStatus.ERROR
-    assert results[0].message == "check failed"
+    assert results[0].message == "점검 실행 중 오류가 발생했습니다: check failed"
     assert results[1].status == CheckStatus.OK
 
 
@@ -295,6 +295,14 @@ def test_office_check_reports_recommended_version_ok() -> None:
 
     assert result.status == CheckStatus.OK
     assert result.detail == reader.office_name
+    assert result.message == "권장 Office 버전이 설치되어 있습니다."
+
+
+def test_office_check_reports_missing_in_korean() -> None:
+    result = OfficeInstallCheck(FakeInstalledProgramReader()).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "Office 2021 또는 2024가 설치되어 있지 않습니다."
 
 
 def test_power_settings_check_reports_warning_when_timeout_is_enabled() -> None:
@@ -416,7 +424,15 @@ def test_recycle_bin_check_reports_non_empty_warning() -> None:
     result = RecycleBinCheck(FakeRecycleBinReader(RecycleBinStatus(item_count=2, size_bytes=2048))).run()
 
     assert result.status == CheckStatus.WARNING
-    assert result.detail == "2 items"
+    assert result.message == "휴지통에 항목이 있습니다."
+    assert result.detail == "2개 항목"
+
+
+def test_recycle_bin_check_reports_unknown_in_korean() -> None:
+    result = RecycleBinCheck(FakeRecycleBinReader(RecycleBinStatus(item_count=None))).run()
+
+    assert result.status == CheckStatus.UNKNOWN
+    assert result.message == "휴지통 상태를 읽을 수 없습니다."
 
 
 def test_browser_history_check_reports_history_warning() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 from skhu_pc_management.application.safety import SafetyGuard
 from skhu_pc_management.application.use_cases.activate_office import ActivateOffice
@@ -38,9 +39,15 @@ from skhu_pc_management.infrastructure.windows.subprocess_command_runner import 
 from skhu_pc_management.infrastructure.windows.windows_admin_privilege_checker import WindowsAdminPrivilegeChecker
 from skhu_pc_management.infrastructure.windows.windows_clipboard import WindowsClipboard
 from skhu_pc_management.infrastructure.windows.windows_pc_renamer import WindowsPcRenamer
-from skhu_pc_management.infrastructure.windows.windows_program_launcher import WindowsProgramLauncher
 from skhu_pc_management.infrastructure.windows.windows_process_launcher import WindowsProcessLauncher
+from skhu_pc_management.infrastructure.windows.windows_program_launcher import WindowsProgramLauncher
 from skhu_pc_management.infrastructure.windows.windows_scheduled_task_reader import WindowsScheduledTaskReader
+from skhu_pc_management.infrastructure.windows.windows_setting_status_providers import (
+    DefaultWallpaperStatusProvider,
+    EdgeShortcutStatusProvider,
+    PasswordExpirationStatusProvider,
+    TaskbarLayoutStatusProvider,
+)
 from skhu_pc_management.infrastructure.windows.windows_system_maintenance import WindowsSystemMaintenance
 from skhu_pc_management.infrastructure.windows.windows_system_settings_operator import WindowsSystemSettingsOperator
 from skhu_pc_management.infrastructure.windows.windows_taskbar_configurator import WindowsTaskbarConfigurator
@@ -55,17 +62,72 @@ from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcIn
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
 
 
-def create_main_window() -> MainWindow:
-    test_mode = os.environ.get("SKHU_PC_MANAGEMENT_TEST_MODE") == "1"
-    safety_guard = SafetyGuard(test_mode=test_mode)
+@dataclass(frozen=True)
+class InfrastructureContainer:
+    registry: WinregRegistry
+    command_runner: SubprocessCommandRunner
+    process_launcher: WindowsProcessLauncher
+    clipboard: WindowsClipboard
+    product_key_provider: EmbeddedProductKeyProvider
+    resource_resolver: PyInstallerResourceResolver
+    network_configurator: NetshNetworkConfigurator
+    taskbar_configurator: WindowsTaskbarConfigurator
+    pc_renamer: WindowsPcRenamer
+    program_launcher: WindowsProgramLauncher
+    system_maintenance: WindowsSystemMaintenance
+    system_settings_operator: WindowsSystemSettingsOperator
+    installed_program_reader: WindowsInstalledProgramReader
+    latest_version_provider: WindowsLatestVersionProvider
+    browser_data_reader: WindowsBrowserDataReader
+    power_settings_reader: WindowsPowerSettingsReader
+    scheduled_task_reader: WindowsScheduledTaskReader
+    recycle_bin_reader: WindowsRecycleBinReader
+    admin_privilege_checker: WindowsAdminPrivilegeChecker
 
+
+@dataclass(frozen=True)
+class UseCaseContainer:
+    load_pc_info: LoadPcInfo
+    check_settings_status: CheckSettingsStatus
+    validate_taskbar_resources: ValidateTaskbarResources
+    apply_taskbar_layout: ApplyTaskbarLayout
+    system_settings_actions: SystemSettingsActions
+    apply_settings: ApplySettings
+    list_network_adapters: ListNetworkAdapters
+    apply_static_ip: ApplyStaticIp
+    set_dhcp: SetDhcp
+    rename_pc: RenamePc
+    launch_program: LaunchProgram
+    run_pc_maintenance: RunPcMaintenance
+    run_pc_checks: RunPcChecks
+    activate_windows: ActivateWindows
+    activate_office: ActivateOffice
+
+
+@dataclass(frozen=True)
+class ViewModelContainer:
+    pc_info: PcInfoViewModel
+    settings: SettingsViewModel
+    network: NetworkViewModel
+    pc_check: PcCheckViewModel
+    activation: ActivationViewModel
+
+
+def is_test_mode_enabled() -> bool:
+    return os.environ.get("SKHU_PC_MANAGEMENT_TEST_MODE") == "1"
+
+
+def create_safety_guard(test_mode: bool | None = None) -> SafetyGuard:
+    return SafetyGuard(test_mode=is_test_mode_enabled() if test_mode is None else test_mode)
+
+
+def create_infrastructure() -> InfrastructureContainer:
     registry = WinregRegistry()
     command_runner = SubprocessCommandRunner()
     process_launcher = WindowsProcessLauncher()
     clipboard = WindowsClipboard()
     product_key_provider = EmbeddedProductKeyProvider()
     resource_resolver = PyInstallerResourceResolver()
-
     network_configurator = NetshNetworkConfigurator(command_runner)
     taskbar_configurator = WindowsTaskbarConfigurator(resource_resolver, command_runner)
     pc_renamer = WindowsPcRenamer(command_runner)
@@ -73,98 +135,167 @@ def create_main_window() -> MainWindow:
     system_maintenance = WindowsSystemMaintenance(command_runner)
     system_settings_operator = WindowsSystemSettingsOperator(registry, command_runner)
     installed_program_reader = WindowsInstalledProgramReader(registry)
-    latest_version_provider = WindowsLatestVersionProvider()
-    browser_data_reader = WindowsBrowserDataReader()
-    power_settings_reader = WindowsPowerSettingsReader(command_runner)
-    scheduled_task_reader = WindowsScheduledTaskReader(command_runner)
-    recycle_bin_reader = WindowsRecycleBinReader()
 
-    load_pc_info = LoadPcInfo(WmiPcInfoReader(registry=registry, command_runner=command_runner))
-    check_settings_status = CheckSettingsStatus(registry)
-    validate_taskbar_resources = ValidateTaskbarResources(taskbar_configurator)
-    apply_taskbar_layout = ApplyTaskbarLayout(taskbar_configurator, safety_guard=safety_guard)
-    system_settings_actions = SystemSettingsActions(system_settings_operator, safety_guard=safety_guard)
-    apply_settings = ApplySettings(
-        registry,
-        command_runner,
-        safety_guard=safety_guard,
-        system_settings_actions=system_settings_actions,
-        apply_taskbar_layout_use_case=apply_taskbar_layout,
-    )
-    list_network_adapters = ListNetworkAdapters(network_configurator)
-    apply_static_ip = ApplyStaticIp(network_configurator, safety_guard=safety_guard)
-    set_dhcp = SetDhcp(network_configurator, safety_guard=safety_guard)
-    rename_pc = RenamePc(pc_renamer, safety_guard=safety_guard)
-    launch_program = LaunchProgram(program_launcher, safety_guard=safety_guard)
-    run_pc_maintenance = RunPcMaintenance(system_maintenance, safety_guard=safety_guard)
-    run_pc_checks = RunPcChecks(
-        [
-            RecycleBinCheck(recycle_bin_reader),
-            ProgramVersionCheck(
-                installed_program_reader,
-                latest_version_provider,
-                "chrome_install",
-                "Chrome 설치/버전 확인",
-                "chrome",
-                "Chrome",
-            ),
-            BrowserHistoryCheck(browser_data_reader, "chrome_history", "Chrome 기록 확인", "chrome"),
-            ProgramVersionCheck(
-                installed_program_reader,
-                latest_version_provider,
-                "edge_install",
-                "Edge 설치/버전 확인",
-                "edge",
-                "Edge",
-            ),
-            BrowserHistoryCheck(browser_data_reader, "edge_history", "Edge 기록 확인", "edge"),
-            PowerSettingsCheck(power_settings_reader),
-            AutoShutdownScheduleCheck(scheduled_task_reader),
-            ProgramVersionCheck(
-                installed_program_reader,
-                latest_version_provider,
-                "potplayer_install",
-                "PotPlayer 설치/버전 확인",
-                "potplayer",
-                "PotPlayer",
-            ),
-            ProgramVersionCheck(
-                installed_program_reader,
-                latest_version_provider,
-                "bandizip_install",
-                "Bandizip 설치/버전 확인",
-                "bandizip",
-                "Bandizip",
-            ),
-            OfficeInstallCheck(installed_program_reader),
-        ]
-    )
-    activate_windows = ActivateWindows(product_key_provider, clipboard, process_launcher, safety_guard=safety_guard)
-    activate_office = ActivateOffice(product_key_provider, clipboard, process_launcher, safety_guard=safety_guard)
-    pc_info_view_model = PcInfoViewModel(load_pc_info, rename_pc)
-    settings_view_model = SettingsViewModel(
-        check_settings_status,
-        apply_settings,
-        validate_taskbar_resources,
-        apply_taskbar_layout,
-    )
-    pc_check_view_model = PcCheckViewModel(run_pc_checks)
-    startup_coordinator = StartupCoordinator(
+    return InfrastructureContainer(
+        registry=registry,
+        command_runner=command_runner,
+        process_launcher=process_launcher,
+        clipboard=clipboard,
+        product_key_provider=product_key_provider,
+        resource_resolver=resource_resolver,
+        network_configurator=network_configurator,
+        taskbar_configurator=taskbar_configurator,
+        pc_renamer=pc_renamer,
+        program_launcher=program_launcher,
+        system_maintenance=system_maintenance,
+        system_settings_operator=system_settings_operator,
+        installed_program_reader=installed_program_reader,
+        latest_version_provider=WindowsLatestVersionProvider(),
+        browser_data_reader=WindowsBrowserDataReader(),
+        power_settings_reader=WindowsPowerSettingsReader(command_runner),
+        scheduled_task_reader=WindowsScheduledTaskReader(command_runner),
+        recycle_bin_reader=WindowsRecycleBinReader(),
         admin_privilege_checker=WindowsAdminPrivilegeChecker(),
-        pc_info_view_model=pc_info_view_model,
-        settings_view_model=settings_view_model,
-        pc_check_view_model=pc_check_view_model,
     )
+
+
+def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) -> UseCaseContainer:
+    setting_status_providers = {
+        "set_default_wallpaper": DefaultWallpaperStatusProvider(infra.registry),
+        "delete_edge_shortcut": EdgeShortcutStatusProvider(infra.registry),
+        "set_taskbar_icons": TaskbarLayoutStatusProvider(infra.resource_resolver),
+        "disable_password_expiration": PasswordExpirationStatusProvider(infra.command_runner),
+    }
+    check_settings_status = CheckSettingsStatus(
+        infra.registry,
+        setting_status_providers=setting_status_providers,
+    )
+    apply_taskbar_layout = ApplyTaskbarLayout(infra.taskbar_configurator, safety_guard=safety_guard)
+    system_settings_actions = SystemSettingsActions(infra.system_settings_operator, safety_guard=safety_guard)
+
+    return UseCaseContainer(
+        load_pc_info=LoadPcInfo(WmiPcInfoReader(registry=infra.registry, command_runner=infra.command_runner)),
+        check_settings_status=check_settings_status,
+        validate_taskbar_resources=ValidateTaskbarResources(infra.taskbar_configurator),
+        apply_taskbar_layout=apply_taskbar_layout,
+        system_settings_actions=system_settings_actions,
+        apply_settings=ApplySettings(
+            infra.registry,
+            infra.command_runner,
+            safety_guard=safety_guard,
+            system_settings_actions=system_settings_actions,
+            apply_taskbar_layout_use_case=apply_taskbar_layout,
+        ),
+        list_network_adapters=ListNetworkAdapters(infra.network_configurator),
+        apply_static_ip=ApplyStaticIp(infra.network_configurator, safety_guard=safety_guard),
+        set_dhcp=SetDhcp(infra.network_configurator, safety_guard=safety_guard),
+        rename_pc=RenamePc(infra.pc_renamer, safety_guard=safety_guard),
+        launch_program=LaunchProgram(infra.program_launcher, safety_guard=safety_guard),
+        run_pc_maintenance=RunPcMaintenance(infra.system_maintenance, safety_guard=safety_guard),
+        run_pc_checks=RunPcChecks(_create_pc_checks(infra)),
+        activate_windows=ActivateWindows(
+            infra.product_key_provider,
+            infra.clipboard,
+            infra.process_launcher,
+            safety_guard=safety_guard,
+        ),
+        activate_office=ActivateOffice(
+            infra.product_key_provider,
+            infra.clipboard,
+            infra.process_launcher,
+            safety_guard=safety_guard,
+        ),
+    )
+
+
+def create_view_models(use_cases: UseCaseContainer) -> ViewModelContainer:
+    return ViewModelContainer(
+        pc_info=PcInfoViewModel(use_cases.load_pc_info, use_cases.rename_pc),
+        settings=SettingsViewModel(
+            use_cases.check_settings_status,
+            use_cases.apply_settings,
+            use_cases.validate_taskbar_resources,
+            use_cases.apply_taskbar_layout,
+        ),
+        network=NetworkViewModel(
+            use_cases.list_network_adapters,
+            use_cases.apply_static_ip,
+            use_cases.set_dhcp,
+        ),
+        pc_check=PcCheckViewModel(use_cases.run_pc_checks),
+        activation=ActivationViewModel(use_cases.activate_windows, use_cases.activate_office),
+    )
+
+
+def create_startup_coordinator(infra: InfrastructureContainer, view_models: ViewModelContainer) -> StartupCoordinator:
+    return StartupCoordinator(
+        admin_privilege_checker=infra.admin_privilege_checker,
+        pc_info_view_model=view_models.pc_info,
+        settings_view_model=view_models.settings,
+        pc_check_view_model=view_models.pc_check,
+    )
+
+
+def create_main_window() -> MainWindow:
+    test_mode = is_test_mode_enabled()
+    safety_guard = create_safety_guard(test_mode)
+    infra = create_infrastructure()
+    use_cases = create_use_cases(infra, safety_guard)
+    view_models = create_view_models(use_cases)
+    startup_coordinator = create_startup_coordinator(infra, view_models)
 
     return MainWindow(
-        pc_info_view_model=pc_info_view_model,
-        settings_view_model=settings_view_model,
-        network_view_model=NetworkViewModel(list_network_adapters, apply_static_ip, set_dhcp),
-        pc_check_view_model=pc_check_view_model,
-        activation_view_model=ActivationViewModel(activate_windows, activate_office),
-        launch_program_use_case=launch_program,
-        maintenance_use_case=run_pc_maintenance,
+        pc_info_view_model=view_models.pc_info,
+        settings_view_model=view_models.settings,
+        network_view_model=view_models.network,
+        pc_check_view_model=view_models.pc_check,
+        activation_view_model=view_models.activation,
+        launch_program_use_case=use_cases.launch_program,
+        maintenance_use_case=use_cases.run_pc_maintenance,
         startup_coordinator=startup_coordinator,
-        resource_resolver=resource_resolver,
+        resource_resolver=infra.resource_resolver,
         test_mode=test_mode,
     )
+
+
+def _create_pc_checks(infra: InfrastructureContainer) -> list[object]:
+    return [
+        RecycleBinCheck(infra.recycle_bin_reader),
+        ProgramVersionCheck(
+            infra.installed_program_reader,
+            infra.latest_version_provider,
+            "chrome_install",
+            "Chrome 설치/버전 확인",
+            "chrome",
+            "Chrome",
+        ),
+        BrowserHistoryCheck(infra.browser_data_reader, "chrome_history", "Chrome 기록 확인", "chrome"),
+        ProgramVersionCheck(
+            infra.installed_program_reader,
+            infra.latest_version_provider,
+            "edge_install",
+            "Edge 설치/버전 확인",
+            "edge",
+            "Edge",
+        ),
+        BrowserHistoryCheck(infra.browser_data_reader, "edge_history", "Edge 기록 확인", "edge"),
+        PowerSettingsCheck(infra.power_settings_reader),
+        AutoShutdownScheduleCheck(infra.scheduled_task_reader),
+        ProgramVersionCheck(
+            infra.installed_program_reader,
+            infra.latest_version_provider,
+            "potplayer_install",
+            "PotPlayer 설치/버전 확인",
+            "potplayer",
+            "PotPlayer",
+        ),
+        ProgramVersionCheck(
+            infra.installed_program_reader,
+            infra.latest_version_provider,
+            "bandizip_install",
+            "Bandizip 설치/버전 확인",
+            "bandizip",
+            "Bandizip",
+        ),
+        OfficeInstallCheck(infra.installed_program_reader),
+    ]

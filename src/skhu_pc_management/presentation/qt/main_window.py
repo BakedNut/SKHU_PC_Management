@@ -12,7 +12,7 @@ from skhu_pc_management.presentation.qt.panels.pc_info_panel import PcInfoPanel
 from skhu_pc_management.presentation.qt.startup_coordinator import StartupCoordinator
 from skhu_pc_management.presentation.qt.styles import APP_QSS
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge
-from skhu_pc_management.presentation.qt.widgets.buttons import nav_button
+from skhu_pc_management.presentation.qt.widgets.buttons import nav_button, set_selected
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
@@ -157,9 +157,7 @@ class MainWindow(QMainWindow):
     def _select_page(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
         for button_index, button in enumerate(self.nav_buttons):
-            button.setProperty("selected", "true" if button_index == index else "false")
-            button.style().unpolish(button)
-            button.style().polish(button)
+            set_selected(button, button_index == index)
 
     def initialize_startup(self) -> None:
         if not self._busy_coordinator.try_begin("초기 정보를 불러오는 중..."):

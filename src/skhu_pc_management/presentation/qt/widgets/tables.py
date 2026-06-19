@@ -43,3 +43,14 @@ def status_item(text: str) -> QTableWidgetItem:
     item.setForeground(QColor(foreground))
     item.setTextAlignment(Qt.AlignCenter)
     return item
+
+
+def set_table_item(table: QTableWidget, row: int, column: int, text: str, tooltip: str | None = None) -> None:
+    item = table_item(text)
+    if tooltip is not None:
+        item.setToolTip(tooltip)
+    table.setItem(row, column, item)
+
+
+def set_status_item(table: QTableWidget, row: int, column: int, text: str) -> None:
+    table.setItem(row, column, status_item(text))

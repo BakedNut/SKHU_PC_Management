@@ -108,13 +108,29 @@ def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
     apply_settings = FakeApplySettings()
     view_model = SettingsViewModel(check_status, apply_settings)
 
+    assert view_model.summary_text == "상태 확인 필요"
+
     view_model.check_status(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "설정됨", "0")]
+    assert view_model.result_rows == [("설정", "-", "설정됨", "0")]
+    assert view_model.summary_text == "모든 항목 정상"
     assert check_status.requests == [["hide_frequent_folders"]]
 
     view_model.apply_selected(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "적용됨", "ok")]
+    assert view_model.result_rows == [("설정", "적용됨", "설정됨", "ok / 0")]
     assert apply_settings.requests == [["hide_frequent_folders"]]
+    assert check_status.requests == [["hide_frequent_folders"], ["hide_frequent_folders"]]
+
+
+def test_settings_viewmodel_summary_counts_attention_rows() -> None:
+    view_model = SettingsViewModel(FakeCheckSettingsStatus(), FakeApplySettings())
+    view_model.result_rows = [
+        ("정상 설정", "-", "설정됨", ""),
+        ("미설정 설정", "-", "미설정", "실제값 1"),
+        ("확인 불가 설정", "-", "확인 불가", "권한 부족"),
+    ]
+
+    assert view_model.warning_count == 2
+    assert view_model.summary_text == "확인 필요 2개"
 
 
 def test_settings_viewmodel_exposes_all_setting_ids_for_status_check() -> None:
@@ -198,9 +214,27 @@ def test_pc_info_viewmodel_translates_unknown_values() -> None:
 def test_pc_check_viewmodel_updates_rows() -> None:
     view_model = PcCheckViewModel(FakeRunPcChecks())
 
+    assert view_model.summary_text == "점검 필요"
+
     view_model.run_checks()
 
     assert view_model.result_rows == [("점검", "정상", "설치됨")]
+    assert view_model.summary_text == "모든 항목 정상"
+
+
+def test_pc_check_viewmodel_summary_counts_warning_and_error_rows() -> None:
+    view_model = PcCheckViewModel(FakeRunPcChecks())
+    view_model.result_rows = [
+        ("정상", "정상", "문제 없음"),
+        ("주의", "주의", "확인 필요"),
+        ("오류", "오류", "실패"),
+        ("미확인", "알 수 없음", "조회 실패"),
+    ]
+
+    assert view_model.warning_count == 1
+    assert view_model.error_count == 1
+    assert view_model.unknown_count == 1
+    assert view_model.summary_text == "오류 1개"
 
 
 def test_pc_check_viewmodel_translates_common_messages() -> None:

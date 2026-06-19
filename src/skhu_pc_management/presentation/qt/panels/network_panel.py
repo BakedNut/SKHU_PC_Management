@@ -37,7 +37,7 @@ class NetworkPanel(QWidget):
 
         self.adapter_combo = QComboBox()
         self.dhcp_button = secondary_button("자동 IP(DHCP)로 전환")
-        self.defaults_button = subtle_button("기본값 넣기")
+        self.defaults_button = subtle_button("학교 기본 대역 입력")
         self.apply_button = primary_button("IP 설정 적용")
         self.refresh_button = primary_button("어댑터 새로고침")
         self.ip_input = QLineEdit()
@@ -79,6 +79,8 @@ class NetworkPanel(QWidget):
         self.refresh_button.clicked.connect(self._load_adapters)
         self.defaults_button.clicked.connect(self._fill_defaults)
         self.ip_input.textEdited.connect(self._update_gateway_from_ip)
+        for widget in (self.subnet_input, self.gateway_input, self.dns1_input, self.dns2_input):
+            widget.textEdited.connect(self._render_validation)
         self.adapter_combo.currentTextChanged.connect(self._adapter_changed)
         self.apply_button.clicked.connect(self._apply_static_ip)
         self.dhcp_button.clicked.connect(self._set_dhcp)
@@ -200,6 +202,7 @@ class NetworkPanel(QWidget):
         if gateway is not None:
             self.gateway_input.setText(gateway)
         self._render_summary()
+        self._render_validation()
 
     def _adapter_changed(self, adapter_name: str) -> None:
         self._view_model.select_adapter_by_name(adapter_name)
@@ -251,16 +254,28 @@ class NetworkPanel(QWidget):
 
     def _render_status(self) -> None:
         self.status_label.setText(self._view_model.status_message)
-        self.validation_label.setText(self._view_model.validation_message or "입력값을 확인한 뒤 적용하세요.")
+        self._render_validation()
         self.ip_status_label.setText(self._view_model.ip_status_text)
-        self.validation_banner.setObjectName("warningBanner" if self._view_model.validation_message else "infoBanner")
-        self.validation_banner.style().unpolish(self.validation_banner)
-        self.validation_banner.style().polish(self.validation_banner)
         self.current_table.setRowCount(len(self._view_model.current_network_info_rows))
         for row_index, row in enumerate(self._view_model.current_network_info_rows):
             self.current_table.setItem(row_index, 0, table_item(row[0]))
             self.current_table.setItem(row_index, 1, table_item(row[1]))
         self._render_summary()
+
+    def _render_validation(self) -> None:
+        is_valid, message = self._view_model.validate_static_ip_fields(
+            self.adapter_combo.currentText(),
+            self.ip_input.text(),
+            self.subnet_input.text(),
+            self.gateway_input.text(),
+            self.dns1_input.text(),
+            self.dns2_input.text(),
+        )
+        text = self._view_model.validation_message or message or "입력값을 확인한 뒤 적용하세요."
+        self.validation_label.setText(text)
+        self.validation_banner.setObjectName("infoBanner" if is_valid and not self._view_model.validation_message else "warningBanner")
+        self.validation_banner.style().unpolish(self.validation_banner)
+        self.validation_banner.style().polish(self.validation_banner)
 
     def _render_summary(self) -> None:
         adapter = self._view_model.selected_adapter

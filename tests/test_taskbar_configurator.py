@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from skhu_pc_management.application.safety import REAL_TASKBAR_APPLY_DISABLED_MESSAGE, SafetyGuard
 from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
 from skhu_pc_management.application.use_cases.validate_taskbar_resources import ValidateTaskbarResources
 from skhu_pc_management.infrastructure.windows.windows_taskbar_configurator import WindowsTaskbarConfigurator
@@ -106,6 +107,25 @@ def test_taskbar_real_apply_requires_command_runner(tmp_path: Path) -> None:
     assert "명령 실행기가 구성되지 않았습니다" in result.message
 
 
+def test_taskbar_real_apply_is_blocked_by_default_policy(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    (resources / "TaskBar.reg").write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    (taskbar_dir / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    command_runner = FakeCommandRunner()
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(configurator).execute(dry_run=False)
+
+    assert result.success is False
+    assert result.message == REAL_TASKBAR_APPLY_DISABLED_MESSAGE
+    assert not appdata.exists()
+    assert command_runner.commands == []
+
+
 def test_taskbar_real_apply_uses_temp_appdata_and_fake_commands(tmp_path: Path, monkeypatch) -> None:
     resources = tmp_path / "resources"
     taskbar_dir = resources / "TaskBar"
@@ -125,7 +145,10 @@ def test_taskbar_real_apply_uses_temp_appdata_and_fake_commands(tmp_path: Path, 
     command_runner = FakeCommandRunner()
     configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
 
-    result = configurator.apply_taskbar_layout(dry_run=False)
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
 
     assert result.success is True
     assert result.dry_run is False
