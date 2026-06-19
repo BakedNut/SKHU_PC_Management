@@ -35,7 +35,8 @@ class NetshNetworkConfigurator:
                 "Get-NetAdapter | Select-Object Name, InterfaceDescription, Status, MacAddress | ConvertTo-Json -Depth 3",
             )
         )
-        return _parse_powershell_adapters(output)
+        adapters = _parse_powershell_adapters(output)
+        return [self._enrich_adapter_details(adapter) for adapter in adapters]
 
     def _list_adapters_with_netsh(self) -> list[NetworkAdapterInfo]:
         output = self.command_runner.run(("netsh", "interface", "show", "interface"))
@@ -167,6 +168,20 @@ class NetshNetworkConfigurator:
         except Exception:
             output = ""
         return _parse_ip_config(output)
+
+    def _enrich_adapter_details(self, adapter: NetworkAdapterInfo) -> NetworkAdapterInfo:
+        details = self._read_adapter_details(adapter.name)
+        return NetworkAdapterInfo(
+            name=adapter.name,
+            description=adapter.description,
+            is_enabled=adapter.is_enabled,
+            mac_address=adapter.mac_address,
+            ip_addresses=details["ip_addresses"],
+            subnet_mask=details["subnet_mask"],
+            gateway=details["gateway"],
+            dns_servers=details["dns_servers"],
+            is_dhcp_enabled=details["is_dhcp_enabled"],
+        )
 
 
 def _parse_interface_names(output: str) -> list[tuple[str, bool]]:

@@ -12,6 +12,10 @@ class NetworkViewModel:
     apply_static_ip_use_case: Any
     set_dhcp_use_case: Any
     adapters: list[NetworkAdapterInfo] = field(default_factory=list)
+    selected_adapter: NetworkAdapterInfo | None = None
+    current_network_info_rows: list[tuple[str, str]] = field(default_factory=list)
+    ip_status_text: str = "알 수 없음"
+    validation_message: str = ""
     status_message: str = "네트워크 어댑터를 불러오지 않았습니다."
     is_busy: bool = False
 
@@ -44,8 +48,12 @@ class NetworkViewModel:
         try:
             self.adapters = self.list_network_adapters_use_case.execute()
             if self.adapters:
+                self.select_adapter_by_name(self.adapters[0].name)
                 self.status_message = f"어댑터 {len(self.adapters)}개를 불러왔습니다."
             else:
+                self.selected_adapter = None
+                self.current_network_info_rows = []
+                self.ip_status_text = "알 수 없음"
                 self.status_message = (
                     "어댑터를 찾지 못했습니다. PowerShell/Get-NetAdapter 또는 netsh 조회 결과를 확인하세요."
                 )
@@ -54,6 +62,10 @@ class NetworkViewModel:
             self.status_message = f"어댑터 조회 실패: {exc}"
         finally:
             self.is_busy = False
+
+    def select_adapter_by_name(self, adapter_name: str) -> None:
+        self.selected_adapter = next((adapter for adapter in self.adapters if adapter.name == adapter_name), None)
+        self._update_current_network_info()
 
     def apply_static_ip(
         self,
@@ -78,12 +90,34 @@ class NetworkViewModel:
                 dns1=dns1,
                 dns2=dns2,
             )
+            self.validation_message = ""
             result = self.apply_static_ip_use_case.execute(config)
             self.status_message = result.message if result.success else f"정적 IP 적용 실패: {result.message}"
         except Exception as exc:
+            self.validation_message = str(exc)
             self.status_message = f"입력 오류: {exc}"
         finally:
             self.is_busy = False
+
+    def _update_current_network_info(self) -> None:
+        adapter = self.selected_adapter
+        if adapter is None:
+            self.ip_status_text = "알 수 없음"
+            self.current_network_info_rows = []
+            return
+
+        self.ip_status_text = _dhcp_text(adapter.is_dhcp_enabled)
+        dns1 = adapter.dns_servers[0] if len(adapter.dns_servers) >= 1 else ""
+        dns2 = adapter.dns_servers[1] if len(adapter.dns_servers) >= 2 else ""
+        self.current_network_info_rows = [
+            ("네트워크 어댑터", adapter.name),
+            ("IP 할당 방식", self.ip_status_text),
+            ("IP 주소", ", ".join(adapter.ip_addresses) or ""),
+            ("서브넷 마스크", adapter.subnet_mask or ""),
+            ("기본 게이트웨이", adapter.gateway or ""),
+            ("기본 DNS", dns1),
+            ("보조 DNS", dns2),
+        ]
 
     def set_dhcp(self, adapter_name: str) -> None:
         if self.is_busy:
@@ -98,3 +132,11 @@ class NetworkViewModel:
             self.status_message = f"DHCP 전환 실패: {exc}"
         finally:
             self.is_busy = False
+
+
+def _dhcp_text(value: bool | None) -> str:
+    if value is True:
+        return "자동 IP(DHCP)"
+    if value is False:
+        return "수동 IP"
+    return "알 수 없음"

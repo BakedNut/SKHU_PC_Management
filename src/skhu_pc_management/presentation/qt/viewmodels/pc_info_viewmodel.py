@@ -9,6 +9,18 @@ class PcInfoViewModel:
     load_pc_info_use_case: Any
     status_message: str = "PC 정보를 불러오지 않았습니다."
     rows: list[tuple[str, str]] = field(default_factory=list)
+    pc_name: str = "알 수 없음"
+    user_name: str = "알 수 없음"
+    windows_version: str = "알 수 없음"
+    windows_version_detail: str = "알 수 없음"
+    cpu: str = "알 수 없음"
+    ram: str = "알 수 없음"
+    gpu: str = "알 수 없음"
+    disks: list[tuple[str, str, str, str]] = field(default_factory=list)
+    tpm_version: str = "알 수 없음"
+    tpm_status_text: str = "알 수 없음"
+    secure_boot_status_text: str = "알 수 없음"
+    boot_mode: str = "알 수 없음"
     is_busy: bool = False
 
     def refresh(self) -> None:
@@ -19,27 +31,31 @@ class PcInfoViewModel:
         self.status_message = "PC 정보를 불러오는 중입니다..."
         try:
             pc_info = self.load_pc_info_use_case.execute()
+            self.pc_name = _display_text(pc_info.computer_name)
+            self.user_name = _display_text(pc_info.user_name)
+            self.windows_version = _display_text(_join_non_empty(pc_info.os_name, pc_info.windows_release))
+            self.windows_version_detail = _display_text(
+                _join_non_empty(pc_info.windows_build, pc_info.windows_architecture)
+            )
+            self.cpu = _display_text(pc_info.cpu_name)
+            self.ram = _format_ram(pc_info)
+            self.gpu = "\n".join(pc_info.gpu_names) if pc_info.gpu_names else "알 수 없음"
+            self.disks = _disk_rows(pc_info.disks)
+            self.tpm_version = _display_text(pc_info.tpm_version)
+            self.tpm_status_text = _format_tpm(pc_info)
+            self.secure_boot_status_text = _display_text(pc_info.secure_boot_status)
+            self.boot_mode = _display_text(pc_info.boot_mode)
             self.rows = [
-                ("PC 이름", pc_info.computer_name),
-                ("사용자", pc_info.user_name),
-                (
-                    "Windows",
-                    _display_text(
-                        _join_non_empty(
-                            pc_info.os_name,
-                            pc_info.windows_release,
-                            pc_info.windows_build,
-                            pc_info.windows_architecture,
-                        )
-                    ),
-                ),
-                ("CPU", pc_info.cpu_name),
-                ("RAM", _format_ram(pc_info)),
-                ("GPU", "\n".join(pc_info.gpu_names) if pc_info.gpu_names else "알 수 없음"),
+                ("PC 이름", self.pc_name),
+                ("사용자", self.user_name),
+                ("Windows", _display_windows_summary(self.windows_version, self.windows_version_detail)),
+                ("CPU", self.cpu),
+                ("RAM", self.ram),
+                ("GPU", self.gpu),
                 ("디스크", _format_disks(pc_info.disks)),
-                ("TPM", _format_tpm(pc_info)),
-                ("Secure Boot", _display_text(pc_info.secure_boot_status)),
-                ("Boot Mode", _display_text(pc_info.boot_mode)),
+                ("TPM", self.tpm_status_text),
+                ("Secure Boot", self.secure_boot_status_text),
+                ("Boot Mode", self.boot_mode),
             ]
             self.status_message = "PC 정보를 불러왔습니다."
         except Exception as exc:
@@ -75,6 +91,14 @@ def _format_ram(pc_info: Any) -> str:
     return base if not details else f"{base} ({', '.join(details)})"
 
 
+def _display_windows_summary(version: str, detail: str) -> str:
+    if version == "알 수 없음":
+        return version
+    if detail == "알 수 없음":
+        return version
+    return f"{version} {detail}"
+
+
 def _format_disks(disks: list[Any]) -> str:
     if not disks:
         return "알 수 없음"
@@ -90,6 +114,18 @@ def _format_disks(disks: list[Any]) -> str:
         parts.append(_display_text(type_text))
         lines.append(" / ".join(parts))
     return "\n".join(lines)
+
+
+def _disk_rows(disks: list[Any]) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str]] = []
+    for disk in disks:
+        model = _display_text(getattr(disk, "model", None))
+        type_text = _display_text(getattr(disk, "display_type", None) or getattr(disk, "disk_type", None))
+        rated_size = _display_text(getattr(disk, "rated_size", None))
+        actual_size = getattr(disk, "actual_size_gib", None)
+        actual_text = "알 수 없음" if actual_size is None else f"{actual_size:g} GiB"
+        rows.append((model, type_text, rated_size, actual_text))
+    return rows
 
 
 def _format_tpm(pc_info: Any) -> str:

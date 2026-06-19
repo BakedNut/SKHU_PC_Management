@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QMessageBox, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QTabWidget, QVBoxLayout, QWidget
 
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
-from skhu_pc_management.presentation.qt.panels.activation_panel import ActivationPanel
+from skhu_pc_management.presentation.qt.panels.action_center_panel import ActionCenterPanel
 from skhu_pc_management.presentation.qt.panels.network_panel import NetworkPanel
-from skhu_pc_management.presentation.qt.panels.pc_check_panel import PcCheckPanel
 from skhu_pc_management.presentation.qt.panels.pc_info_panel import PcInfoPanel
-from skhu_pc_management.presentation.qt.panels.settings_panel import SettingsPanel
 from skhu_pc_management.presentation.qt.startup_coordinator import StartupCoordinator
+from skhu_pc_management.presentation.qt.styles import APP_QSS
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
@@ -33,7 +32,9 @@ class MainWindow(QMainWindow):
         test_mode: bool = False,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("SKHU PC Management")
+        self.setWindowTitle("성공회대학교 PC 관리 프로그램")
+        self.setStyleSheet(APP_QSS)
+        self._pc_info_view_model = pc_info_view_model
         self._startup_coordinator = startup_coordinator
         self._resource_resolver = resource_resolver
         self._test_mode = test_mode
@@ -42,39 +43,63 @@ class MainWindow(QMainWindow):
         self.is_busy = self._busy_coordinator.is_busy
         self.busy_message = self._busy_coordinator.message
 
+        self.windows_badge = QLabel("Windows: 알 수 없음")
+        self.windows_badge.setObjectName("windowsBadge")
+        self.pc_badge = QLabel("PC: 알 수 없음")
+        self.pc_badge.setObjectName("pcBadge")
+        self.busy_card = QFrame()
+        self.busy_card.setObjectName("busyCard")
+        self.busy_card.setVisible(False)
+        busy_layout = QVBoxLayout(self.busy_card)
+        busy_layout.setContentsMargins(10, 8, 10, 8)
         self.status_label = QLabel("")
+        self.status_label.setObjectName("busyLabel")
+        busy_layout.addWidget(self.status_label)
+
         self.test_mode_label = QLabel(TEST_MODE_DISABLED_MESSAGE if test_mode else "")
         self.test_mode_label.setVisible(test_mode)
-        self.logo_label = QLabel()
-        self.logo_label.setFixedSize(32, 32)
-        self.logo_label.setScaledContents(True)
-        self.title_label = QLabel("SKHU PC Management")
+        self.test_mode_label.setObjectName("busyLabel")
+
         self.tabs = QTabWidget()
         self.pc_info_panel = PcInfoPanel(pc_info_view_model, self._busy_coordinator)
-        self.settings_panel = SettingsPanel(settings_view_model, self._busy_coordinator, test_mode=test_mode)
+        self.action_center_panel = ActionCenterPanel(
+            settings_view_model,
+            pc_check_view_model,
+            activation_view_model,
+            self._busy_coordinator,
+            test_mode=test_mode,
+        )
         self.network_panel = NetworkPanel(network_view_model, self._busy_coordinator, test_mode=test_mode)
-        self.pc_check_panel = PcCheckPanel(pc_check_view_model, self._busy_coordinator)
-        self.activation_panel = ActivationPanel(activation_view_model, self._busy_coordinator, test_mode=test_mode)
         self.tabs.addTab(self.pc_info_panel, "PC 정보")
-        self.tabs.addTab(self.settings_panel, "기본 설정")
-        self.tabs.addTab(self.network_panel, "네트워크 설정")
-        self.tabs.addTab(self.pc_check_panel, "PC 점검")
-        self.tabs.addTab(self.activation_panel, "인증")
+        self.tabs.addTab(self.action_center_panel, "작업 센터")
+        self.tabs.addTab(self.network_panel, "네트워크")
 
         central = QWidget()
         layout = QVBoxLayout(central)
-        header = QHBoxLayout()
-        header.addWidget(self.logo_label)
-        header.addWidget(self.title_label)
-        header.addStretch()
-        layout.addLayout(header)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+        layout.addWidget(self._header())
+        layout.addWidget(self.busy_card)
         layout.addWidget(self.test_mode_label)
-        layout.addWidget(self.status_label)
         layout.addWidget(self.tabs)
         self.setCentralWidget(central)
-        self.resize(1000, 700)
+        self.resize(1350, 1020)
+        self.setMinimumSize(900, 600)
         self._apply_branding()
         QTimer.singleShot(0, self.initialize_startup)
+
+    def _header(self) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("headerCard")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 12, 12, 12)
+        title = QLabel("SKHU PC Management")
+        title.setObjectName("headerTitle")
+        layout.addWidget(title)
+        layout.addStretch()
+        layout.addWidget(self.windows_badge)
+        layout.addWidget(self.pc_badge)
+        return frame
 
     def initialize_startup(self) -> None:
         if not self._busy_coordinator.try_begin("초기 정보를 불러오는 중..."):
@@ -83,8 +108,9 @@ class MainWindow(QMainWindow):
         try:
             result = self._startup_coordinator.initialize()
             self.pc_info_panel.render()
-            self.settings_panel.render()
-            self.pc_check_panel.render()
+            self.action_center_panel.render()
+            self.action_center_panel.set_detected_windows_text(self._pc_info_view_model.windows_version)
+            self._update_header_badges()
 
             messages: list[str] = []
             if not result.is_admin:
@@ -108,9 +134,13 @@ class MainWindow(QMainWindow):
     def _on_busy_changed(self, is_busy: bool, message: str) -> None:
         self.is_busy = is_busy
         self.busy_message = message
-        if message:
-            self.status_label.setText(message)
+        self.busy_card.setVisible(is_busy)
+        self.status_label.setText(message)
         self.tabs.setEnabled(not is_busy)
+
+    def _update_header_badges(self) -> None:
+        self.windows_badge.setText(self._pc_info_view_model.windows_version)
+        self.pc_badge.setText(self._pc_info_view_model.pc_name)
 
     def _apply_branding(self) -> None:
         if self._resource_resolver is None:
@@ -120,7 +150,5 @@ class MainWindow(QMainWindow):
         except Exception:
             return
         icon = QIcon(str(icon_path))
-        if icon.isNull():
-            return
-        self.setWindowIcon(icon)
-        self.logo_label.setPixmap(icon.pixmap(32, 32))
+        if not icon.isNull():
+            self.setWindowIcon(icon)
