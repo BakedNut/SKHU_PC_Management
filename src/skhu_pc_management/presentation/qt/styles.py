@@ -5,143 +5,258 @@ from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
 
 APP_QSS = """
 QMainWindow, QWidget {
-    background: #F3F4F6;
+    background: #F6F7F9;
     color: #111827;
+    font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
     font-size: 13px;
 }
-QFrame#card {
+QFrame#appShell {
+    background: #F6F7F9;
+}
+QFrame#topBar {
     background: #FFFFFF;
     border: 1px solid #E5E7EB;
-    border-radius: 10px;
+    border-radius: 12px;
 }
-QFrame#headerCard {
-    background: #0F172A;
-    border: 1px solid #1E293B;
-    border-radius: 10px;
+QFrame#sideNav {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
 }
-QFrame#busyCard {
+QFrame#contentSurface {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+}
+QFrame#card, QFrame#sectionCard, QFrame#summaryCard {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+}
+QFrame#sectionCard {
+    background: #FAFAFA;
+}
+QFrame#summaryCard {
+    background: #FFFFFF;
+}
+QFrame#infoBanner {
     background: #EFF6FF;
     border: 1px solid #BFDBFE;
     border-radius: 10px;
 }
-QFrame#startPointCard {
-    background: #EFF6FF;
-    border: 1px solid #93C5FD;
+QFrame#warningBanner {
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
     border-radius: 10px;
 }
-QLabel#cardTitle {
-    font-size: 15px;
-    font-weight: 600;
+QLabel#appTitle {
     color: #111827;
-    margin-bottom: 6px;
+    font-size: 20px;
+    font-weight: 700;
 }
-QLabel#fieldLabel, QLabel#sectionTitle {
+QLabel#appSubtitle, QLabel#pageSubtitle, QLabel#mutedText {
     color: #6B7280;
-    font-weight: 600;
 }
-QLabel#headerTitle {
-    color: white;
-    font-size: 22px;
+QLabel#pageTitle {
+    color: #111827;
+    font-size: 24px;
     font-weight: 700;
 }
-QLabel#windowsBadge {
-    background: #1D4ED8;
-    color: white;
-    font-weight: 600;
-    border-radius: 10px;
-    padding: 3px 8px;
+QLabel#sectionTitle, QLabel#cardTitle {
+    color: #111827;
+    font-size: 15px;
+    font-weight: 650;
 }
-QLabel#pcBadge {
-    background: #0EA5E9;
-    color: white;
-    font-weight: 600;
-    border-radius: 10px;
-    padding: 3px 8px;
+QLabel#summaryTitle {
+    color: #6B7280;
+    font-size: 12px;
+    font-weight: 650;
 }
-QLabel#busyLabel {
-    color: #1E3A8A;
+QLabel#summaryValue {
+    color: #111827;
+    font-size: 18px;
     font-weight: 700;
 }
-QLineEdit, QTextEdit, QComboBox {
-    background: #F9FAFB;
-    border: 1px solid #D1D5DB;
-    border-radius: 4px;
-    padding: 6px 8px;
+QLabel#fieldLabel {
+    color: #4B5563;
+    font-weight: 650;
+}
+QLabel#readOnlyField {
+    background: #FAFAFA;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: #111827;
+}
+QLabel#statusBadge {
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-weight: 650;
+}
+QLabel#statusBadge[tone="neutral"] {
+    background: #F3F4F6;
+    color: #4B5563;
+    border: 1px solid #E5E7EB;
+}
+QLabel#statusBadge[tone="info"] {
+    background: #EFF6FF;
+    color: #1D4ED8;
+    border: 1px solid #BFDBFE;
+}
+QLabel#statusBadge[tone="success"] {
+    background: #ECFDF5;
+    color: #16A34A;
+    border: 1px solid #BBF7D0;
+}
+QLabel#statusBadge[tone="warning"] {
+    background: #FFFBEB;
+    color: #D97706;
+    border: 1px solid #FDE68A;
+}
+QLabel#statusBadge[tone="danger"] {
+    background: #FEF2F2;
+    color: #DC2626;
+    border: 1px solid #FECACA;
 }
 QPushButton {
-    background: #EEF2FF;
-    border: 1px solid #C7D2FE;
-    border-radius: 4px;
-    color: #1E3A8A;
-    font-weight: 600;
-    padding: 7px 12px;
+    min-height: 34px;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-weight: 650;
 }
 QPushButton[buttonRole="primary"] {
     background: #2563EB;
-    border-color: #2563EB;
-    color: white;
+    border: 1px solid #2563EB;
+    color: #FFFFFF;
+}
+QPushButton[buttonRole="primary"]:hover {
+    background: #1D4ED8;
+    border-color: #1D4ED8;
+}
+QPushButton[buttonRole="secondary"] {
+    background: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    color: #111827;
+}
+QPushButton[buttonRole="secondary"]:hover {
+    background: #F9FAFB;
+    border-color: #9CA3AF;
+}
+QPushButton[buttonRole="subtle"] {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #2563EB;
+}
+QPushButton[buttonRole="subtle"]:hover {
+    background: #EFF6FF;
 }
 QPushButton[buttonRole="danger"] {
-    background: #DC2626;
-    border-color: #DC2626;
-    color: white;
+    background: #FEF2F2;
+    border: 1px solid #FECACA;
+    color: #DC2626;
+}
+QPushButton[buttonRole="danger"]:hover {
+    background: #FEE2E2;
+}
+QPushButton[buttonRole="warning"] {
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    color: #B45309;
+}
+QPushButton[buttonRole="nav"] {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #374151;
+    text-align: left;
+    padding: 10px 12px;
+}
+QPushButton[buttonRole="nav"]:hover {
+    background: #F3F4F6;
+}
+QPushButton[buttonRole="nav"][selected="true"] {
+    background: #EFF6FF;
+    border-color: #BFDBFE;
+    color: #1D4ED8;
+}
+QPushButton:pressed {
+    padding-top: 8px;
+    padding-bottom: 6px;
 }
 QPushButton:disabled {
-    background: #E5E7EB;
-    border-color: #D1D5DB;
+    background: #F3F4F6;
+    border-color: #E5E7EB;
     color: #9CA3AF;
 }
-QTableWidget {
-    background: white;
-    alternate-background-color: #F9FAFB;
+QLineEdit, QTextEdit, QComboBox {
+    background: #FFFFFF;
     border: 1px solid #D1D5DB;
-    gridline-color: #E5E7EB;
+    border-radius: 8px;
+    padding: 7px 9px;
+    min-height: 32px;
+}
+QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+    border: 1px solid #2563EB;
+}
+QLineEdit:read-only {
+    background: #FAFAFA;
+    color: #4B5563;
+}
+QCheckBox, QRadioButton {
+    color: #111827;
+    spacing: 8px;
+}
+QTableWidget {
+    background: #FFFFFF;
+    alternate-background-color: #FAFAFA;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    gridline-color: #F3F4F6;
+    selection-background-color: #EFF6FF;
+    selection-color: #111827;
 }
 QHeaderView::section {
-    background: #F9FAFB;
+    background: #FAFAFA;
     border: 0;
-    border-bottom: 1px solid #D1D5DB;
-    padding: 6px;
-    font-weight: 600;
+    border-bottom: 1px solid #E5E7EB;
+    color: #4B5563;
+    padding: 8px;
+    font-weight: 650;
+}
+QScrollArea {
+    border: 0;
+    background: transparent;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
 }
 QTabWidget::pane {
     border: 0;
-    top: -1px;
 }
 QTabBar::tab {
     background: #E5E7EB;
     color: #6B7280;
-    font-weight: 600;
+    font-weight: 650;
     padding: 10px 18px;
     margin-right: 6px;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
 }
 QTabBar::tab:selected {
-    background: white;
+    background: #FFFFFF;
     color: #111827;
-    border: 1px solid #E5E7EB;
-    border-bottom: 0;
 }
 """
 
 
 def make_card(title: str | None = None, object_name: str = "card") -> tuple[QFrame, QVBoxLayout]:
-    frame = QFrame()
-    frame.setObjectName(object_name)
-    layout = QVBoxLayout(frame)
-    layout.setContentsMargins(12, 12, 12, 12)
-    layout.setSpacing(8)
-    if title:
-        from PySide6.QtWidgets import QLabel
+    from skhu_pc_management.presentation.qt.widgets.surfaces import Card
 
-        title_label = QLabel(title)
-        title_label.setObjectName("cardTitle")
-        layout.addWidget(title_label)
-    return frame, layout
+    frame = Card(title)
+    frame.setObjectName(object_name)
+    return frame, frame.body_layout
 
 
 def set_button_role(button: QWidget, role: str) -> None:
-    button.setProperty("buttonRole", role)
-    button.style().unpolish(button)
-    button.style().polish(button)
+    from skhu_pc_management.presentation.qt.widgets.buttons import set_button_role as _set_button_role
+
+    _set_button_role(button, role)

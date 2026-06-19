@@ -2,22 +2,25 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
+    QScrollArea,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
-from skhu_pc_management.presentation.qt.styles import make_card, set_button_role
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
+from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, secondary_button, subtle_button
+from skhu_pc_management.presentation.qt.widgets.forms import FieldRow
+from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SummaryCard
+from skhu_pc_management.presentation.qt.widgets.tables import configure_table, table_item
 
 
 class NetworkPanel(QWidget):
@@ -33,30 +36,45 @@ class NetworkPanel(QWidget):
         self._test_mode = test_mode
 
         self.adapter_combo = QComboBox()
-        self.dhcp_button = QPushButton("자동 IP(DHCP)로 전환")
-        self.defaults_button = QPushButton("기본값 넣기")
-        self.apply_button = QPushButton("IP 설정 적용")
-        set_button_role(self.apply_button, "primary")
-        self.refresh_button = QPushButton("어댑터 새로고침")
+        self.dhcp_button = secondary_button("자동 IP(DHCP)로 전환")
+        self.defaults_button = subtle_button("기본값 넣기")
+        self.apply_button = primary_button("IP 설정 적용")
+        self.refresh_button = primary_button("어댑터 새로고침")
         self.ip_input = QLineEdit()
         self.subnet_input = QLineEdit("255.255.255.0")
         self.gateway_input = QLineEdit()
         self.dns1_input = QLineEdit()
         self.dns2_input = QLineEdit()
         self.validation_label = QLabel("")
+        self.validation_label.setObjectName("mutedText")
         self.status_label = QLabel(view_model.status_message)
+        self.status_label.setObjectName("mutedText")
         self.ip_status_label = QLabel(view_model.ip_status_text)
+        self.ip_status_label.setObjectName("mutedText")
+        self.adapter_summary = SummaryCard("현재 어댑터", "알 수 없음")
+        self.mode_summary = SummaryCard("할당 방식", "알 수 없음")
+        self.ip_summary = SummaryCard("IP 주소", "알 수 없음")
+
         self.current_table = QTableWidget(0, 2)
         self.current_table.setHorizontalHeaderLabels(["항목", "값"])
-        self.current_table.horizontalHeader().setStretchLastSection(True)
-        self.current_table.setAlternatingRowColors(True)
+        configure_table(self.current_table, compact=True)
+        self.current_table.setMinimumHeight(360)
 
-        root = QGridLayout(self)
-        root.setColumnStretch(0, 120)
-        root.setColumnStretch(1, 100)
-        root.setHorizontalSpacing(12)
-        root.addWidget(self._config_card(), 0, 0)
-        root.addWidget(self._status_card(), 0, 1)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+        content_layout.addLayout(self._page_header())
+        content_layout.addLayout(self._summary_row())
+        content_layout.addLayout(self._body_layout())
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        root.addWidget(scroll)
 
         self.refresh_button.clicked.connect(self._load_adapters)
         self.defaults_button.clicked.connect(self._fill_defaults)
@@ -66,38 +84,75 @@ class NetworkPanel(QWidget):
         self.dhcp_button.clicked.connect(self._set_dhcp)
         self._apply_test_mode()
 
-    def _config_card(self) -> QWidget:
-        card, layout = make_card("IP 구성 작업")
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.dhcp_button)
-        buttons.addWidget(self.defaults_button)
-        buttons.addWidget(self.apply_button)
-        buttons.addWidget(self.refresh_button)
-        buttons.addStretch()
-        layout.addLayout(buttons)
+    def _page_header(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        title_column = QVBoxLayout()
+        title = QLabel("네트워크")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("네트워크 어댑터의 현재 상태를 확인하고 IP 구성을 변경합니다.")
+        subtitle.setObjectName("pageSubtitle")
+        title_column.addWidget(title)
+        title_column.addWidget(subtitle)
+        row.addLayout(title_column)
+        row.addStretch()
+        row.addWidget(self.refresh_button)
+        return row
 
-        grid = QGridLayout()
-        _add_field(grid, 0, "어댑터", self.adapter_combo)
-        _add_field(grid, 1, "IP 주소", self.ip_input)
-        _add_field(grid, 2, "서브넷 마스크", self.subnet_input)
-        _add_field(grid, 3, "기본 게이트웨이", self.gateway_input)
-        _add_field(grid, 4, "기본 DNS", self.dns1_input)
-        _add_field(grid, 5, "보조 DNS", self.dns2_input)
-        grid.addWidget(self.validation_label, 6, 1)
-        layout.addLayout(grid)
-        layout.addWidget(self.status_label)
+    def _summary_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        row.addWidget(self.adapter_summary)
+        row.addWidget(self.mode_summary)
+        row.addWidget(self.ip_summary)
+        return row
+
+    def _body_layout(self) -> QHBoxLayout:
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        body.addWidget(self._config_card(), 3)
+        body.addWidget(self._status_card(), 2)
+        return body
+
+    def _config_card(self) -> QWidget:
+        card = Card("IP 구성")
+        form_container = QWidget()
+        form_container.setMaximumWidth(620)
+        grid = QGridLayout(form_container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(12)
+        _add_field(grid, 0, 0, "어댑터", self.adapter_combo)
+        _add_field(grid, 1, 0, "IP 주소", self.ip_input)
+        _add_field(grid, 1, 1, "서브넷 마스크", self.subnet_input)
+        _add_field(grid, 2, 0, "기본 게이트웨이", self.gateway_input)
+        _add_field(grid, 2, 1, "기본 DNS", self.dns1_input)
+        _add_field(grid, 3, 0, "보조 DNS", self.dns2_input)
+        card.body_layout.addWidget(form_container)
+        self.validation_banner = QFrame()
+        self.validation_banner.setObjectName("infoBanner")
+        validation_layout = QVBoxLayout(self.validation_banner)
+        validation_layout.setContentsMargins(12, 8, 12, 8)
+        validation_layout.addWidget(self.validation_label)
+        card.body_layout.addWidget(self.validation_banner)
+        card.body_layout.addWidget(self.status_label)
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.defaults_button)
+        button_row.addStretch()
+        button_row.addWidget(self.dhcp_button)
+        button_row.addWidget(self.apply_button)
+        card.body_layout.addLayout(button_row)
         return card
 
     def _status_card(self) -> QWidget:
-        card, layout = make_card("현재 네트워크 상태")
+        card = Card("현재 네트워크 상태")
         row = QHBoxLayout()
-        label = QLabel("할당 방식:")
+        label = QLabel("할당 방식")
         label.setObjectName("fieldLabel")
         row.addWidget(label)
         row.addWidget(self.ip_status_label)
         row.addStretch()
-        layout.addLayout(row)
-        layout.addWidget(self.current_table)
+        card.body_layout.addLayout(row)
+        card.body_layout.addWidget(self.current_table)
         return card
 
     def _load_adapters(self) -> None:
@@ -128,6 +183,7 @@ class NetworkPanel(QWidget):
         self.gateway_input.setText(defaults["gateway"])
         self.dns1_input.setText(defaults["dns1"])
         self.dns2_input.setText(defaults["dns2"])
+        self._render_status()
 
     def _fill_from_selected_adapter(self) -> None:
         adapter = self._view_model.selected_adapter
@@ -143,6 +199,7 @@ class NetworkPanel(QWidget):
         gateway = self._view_model.gateway_for_ip_address(value)
         if gateway is not None:
             self.gateway_input.setText(gateway)
+        self._render_summary()
 
     def _adapter_changed(self, adapter_name: str) -> None:
         self._view_model.select_adapter_by_name(adapter_name)
@@ -194,12 +251,22 @@ class NetworkPanel(QWidget):
 
     def _render_status(self) -> None:
         self.status_label.setText(self._view_model.status_message)
-        self.validation_label.setText(self._view_model.validation_message)
+        self.validation_label.setText(self._view_model.validation_message or "입력값을 확인한 뒤 적용하세요.")
         self.ip_status_label.setText(self._view_model.ip_status_text)
+        self.validation_banner.setObjectName("warningBanner" if self._view_model.validation_message else "infoBanner")
+        self.validation_banner.style().unpolish(self.validation_banner)
+        self.validation_banner.style().polish(self.validation_banner)
         self.current_table.setRowCount(len(self._view_model.current_network_info_rows))
         for row_index, row in enumerate(self._view_model.current_network_info_rows):
-            self.current_table.setItem(row_index, 0, QTableWidgetItem(row[0]))
-            self.current_table.setItem(row_index, 1, QTableWidgetItem(row[1]))
+            self.current_table.setItem(row_index, 0, table_item(row[0]))
+            self.current_table.setItem(row_index, 1, table_item(row[1]))
+        self._render_summary()
+
+    def _render_summary(self) -> None:
+        adapter = self._view_model.selected_adapter
+        self.adapter_summary.set_value(adapter.name if adapter else "알 수 없음")
+        self.mode_summary.set_value(self._view_model.ip_status_text or "알 수 없음")
+        self.ip_summary.set_value(self.ip_input.text() or "알 수 없음")
 
     def _set_busy(self, is_busy: bool) -> None:
         self.refresh_button.setEnabled(not is_busy)
@@ -216,8 +283,5 @@ class NetworkPanel(QWidget):
         self.status_label.setText(TEST_MODE_DISABLED_MESSAGE)
 
 
-def _add_field(grid: QGridLayout, row: int, label_text: str, widget: QWidget) -> None:
-    label = QLabel(label_text)
-    label.setObjectName("fieldLabel")
-    grid.addWidget(label, row, 0)
-    grid.addWidget(widget, row, 1)
+def _add_field(grid: QGridLayout, row: int, column: int, label_text: str, widget: QWidget) -> None:
+    grid.addWidget(FieldRow(label_text, widget), row, column)

@@ -2,20 +2,26 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QGridLayout,
+    QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QInputDialog,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
-from skhu_pc_management.presentation.qt.styles import make_card, set_button_role
 from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel
+from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
+from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, secondary_button, set_button_role, warning_button
+from skhu_pc_management.presentation.qt.widgets.forms import FormGrid, ReadOnlyField
+from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SummaryCard
+from skhu_pc_management.presentation.qt.widgets.tables import configure_table, table_item
 
 
 NOT_IMPLEMENTED_MESSAGE = "아직 Python 마이그레이션에서 구현되지 않은 기능입니다."
@@ -34,96 +40,132 @@ class PcInfoPanel(QWidget):
         self._test_mode = test_mode
 
         self.status_label = QLabel(view_model.status_message)
-        self.refresh_button = QPushButton("PC 정보 새로고침")
-        set_button_role(self.refresh_button, "primary")
-        self.rename_button = QPushButton("PC 이름 변경")
-        self.auto_rename_button = QPushButton("PC 이름 사용자 이름과 맞추기")
-        set_button_role(self.auto_rename_button, "danger")
+        self.status_label.setObjectName("mutedText")
+        self.refresh_button = primary_button("PC 정보 새로고침")
+        self.rename_button = secondary_button("PC 이름 변경")
+        self.auto_rename_button = warning_button("PC 이름 사용자 이름과 맞추기")
 
-        self.pc_name = _read_only()
-        self.user_name = _read_only()
-        self.windows = _read_only()
-        self.windows_detail = _read_only()
-        self.cpu = _read_only()
-        self.ram = _read_only()
-        self.gpu = _read_only()
-        self.tpm_version = _read_only()
-        self.tpm_status = QLabel()
-        self.secure_boot = _read_only()
-        self.boot_mode = _read_only()
+        self.summary_pc_name = SummaryCard("PC 이름", "알 수 없음")
+        self.summary_windows = SummaryCard("Windows", "알 수 없음")
+        self.summary_user = SummaryCard("사용자", "알 수 없음")
+
+        self.pc_name = ReadOnlyField()
+        self.user_name = ReadOnlyField()
+        self.windows = ReadOnlyField()
+        self.windows_detail = ReadOnlyField()
+        self.cpu = ReadOnlyField()
+        self.ram = ReadOnlyField()
+        self.gpu = ReadOnlyField()
+        self.tpm_version = ReadOnlyField()
+        self.tpm_status = StatusBadge("알 수 없음", "neutral")
+        self.secure_boot = StatusBadge("알 수 없음", "neutral")
+        self.boot_mode = StatusBadge("알 수 없음", "neutral")
 
         self.disk_table = QTableWidget(0, 4)
         self.disk_table.setHorizontalHeaderLabels(["모델", "타입", "정격 용량", "실제 용량"])
-        self.disk_table.horizontalHeader().setStretchLastSection(True)
-        self.disk_table.setAlternatingRowColors(True)
+        configure_table(self.disk_table)
+        self.disk_table.setMinimumHeight(220)
 
-        root_layout = QGridLayout(self)
-        root_layout.setColumnStretch(0, 115)
-        root_layout.setColumnStretch(1, 100)
-        root_layout.setHorizontalSpacing(12)
-
-        left = QVBoxLayout()
-        left.addWidget(self._system_card())
-        left.addWidget(self._hardware_card())
-        left.addStretch()
-
-        right = QVBoxLayout()
-        right.addWidget(self._pc_actions_card())
-        right.addWidget(self._disk_card())
-        right.addWidget(self._security_card())
-        right.addStretch()
-
-        root_layout.addLayout(left, 0, 0)
-        root_layout.addLayout(right, 0, 1)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+        content_layout.addLayout(self._page_header())
+        content_layout.addLayout(self._summary_row())
+        content_layout.addLayout(self._body_layout())
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        root.addWidget(scroll)
 
         self.refresh_button.clicked.connect(self._refresh)
         self.rename_button.clicked.connect(self._rename_pc)
         self.auto_rename_button.clicked.connect(self._auto_rename_pc)
 
+    def _page_header(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        title_column = QVBoxLayout()
+        title = QLabel("PC 정보")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("장치, Windows, 하드웨어 및 보안 호환성 정보를 확인합니다.")
+        subtitle.setObjectName("pageSubtitle")
+        title_column.addWidget(title)
+        title_column.addWidget(subtitle)
+        row.addLayout(title_column)
+        row.addStretch()
+        row.addWidget(self.refresh_button)
+        return row
+
+    def _summary_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        row.addWidget(self.summary_pc_name)
+        row.addWidget(self.summary_windows)
+        row.addWidget(self.summary_user)
+        return row
+
+    def _body_layout(self) -> QHBoxLayout:
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        left = QVBoxLayout()
+        left.setSpacing(14)
+        left.addWidget(self._system_card())
+        left.addWidget(self._hardware_card())
+        left.addWidget(self._disk_card())
+        right = QVBoxLayout()
+        right.setSpacing(14)
+        right.addWidget(self._pc_actions_card())
+        right.addWidget(self._security_card())
+        right.addStretch()
+        body.addLayout(left, 3)
+        body.addLayout(right, 2)
+        return body
+
     def _system_card(self) -> QWidget:
-        card, layout = make_card("시스템 정보")
-        grid = QGridLayout()
-        _add_field(grid, 0, 0, "PC 이름", self.pc_name)
-        _add_field(grid, 0, 1, "사용자 이름", self.user_name)
-        _add_field(grid, 1, 0, "Windows", self.windows)
-        _add_field(grid, 1, 1, "상세 버전", self.windows_detail)
-        layout.addLayout(grid)
+        card = Card("시스템 정보")
+        form = FormGrid(columns=2)
+        form.add_field("PC 이름", self.pc_name)
+        form.add_field("사용자 이름", self.user_name)
+        form.add_field("Windows", self.windows)
+        form.add_field("상세 버전", self.windows_detail)
+        card.body_layout.addWidget(form)
         return card
 
     def _hardware_card(self) -> QWidget:
-        card, layout = make_card("하드웨어 정보")
-        layout.addWidget(_label("CPU"))
-        layout.addWidget(self.cpu)
-        layout.addWidget(_label("RAM"))
-        layout.addWidget(self.ram)
-        layout.addWidget(_label("GPU"))
-        layout.addWidget(self.gpu)
+        card = Card("하드웨어 정보")
+        form = FormGrid(columns=1)
+        form.add_field("CPU", self.cpu)
+        form.add_field("RAM", self.ram)
+        form.add_field("GPU", self.gpu)
+        card.body_layout.addWidget(form)
         return card
 
     def _pc_actions_card(self) -> QWidget:
-        card, layout = make_card("PC 작업")
-        button_row = QGridLayout()
-        button_row.addWidget(self.rename_button, 0, 0)
-        button_row.addWidget(self.auto_rename_button, 0, 1)
-        button_row.addWidget(self.refresh_button, 0, 2)
-        layout.addLayout(button_row)
-        layout.addWidget(self.status_label)
+        card = Card("PC 작업", "PC 이름 변경은 재부팅 후 적용됩니다.")
+        card.body_layout.addWidget(self.rename_button)
+        card.body_layout.addWidget(self.auto_rename_button)
+        card.body_layout.addWidget(self.status_label)
         return card
 
     def _disk_card(self) -> QWidget:
-        card, layout = make_card("디스크 정보")
-        layout.addWidget(self.disk_table)
+        card = Card("디스크 정보")
+        card.body_layout.addWidget(self.disk_table)
         return card
 
     def _security_card(self) -> QWidget:
-        card, layout = make_card("보안/호환 상태")
+        card = Card("보안/호환 상태")
         grid = QGridLayout()
-        grid.addWidget(_label("TPM"), 0, 0)
-        grid.addWidget(self.tpm_version, 0, 1)
-        grid.addWidget(self.tpm_status, 0, 2)
-        _add_field(grid, 1, 0, "Secure Boot", self.secure_boot, colspan=2)
-        _add_field(grid, 2, 0, "Boot Mode", self.boot_mode, colspan=2)
-        layout.addLayout(grid)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+        _add_badge_row(grid, 0, "TPM 버전", self.tpm_version)
+        _add_badge_row(grid, 1, "TPM 상태", self.tpm_status)
+        _add_badge_row(grid, 2, "Secure Boot", self.secure_boot)
+        _add_badge_row(grid, 3, "Boot Mode", self.boot_mode)
+        card.body_layout.addLayout(grid)
         return card
 
     def _refresh(self) -> None:
@@ -141,7 +183,7 @@ class PcInfoPanel(QWidget):
 
     def _rename_pc(self) -> None:
         if self._test_mode:
-            QMessageBox.information(self, "테스트 모드", "테스트 모드에서는 실제 설정 변경 기능이 비활성화됩니다.")
+            QMessageBox.information(self, "테스트 모드", TEST_MODE_DISABLED_MESSAGE)
             return
         new_name, accepted = QInputDialog.getText(self, "PC 이름 변경", "새 PC 이름")
         if not accepted:
@@ -151,7 +193,7 @@ class PcInfoPanel(QWidget):
 
     def _auto_rename_pc(self) -> None:
         if self._test_mode:
-            QMessageBox.information(self, "테스트 모드", "테스트 모드에서는 실제 설정 변경 기능이 비활성화됩니다.")
+            QMessageBox.information(self, "테스트 모드", TEST_MODE_DISABLED_MESSAGE)
             return
         result = self._view_model.auto_rename_pc()
         self._show_rename_result(result)
@@ -169,14 +211,17 @@ class PcInfoPanel(QWidget):
 
     def set_busy(self, is_busy: bool) -> None:
         self.refresh_button.setEnabled(not is_busy)
-        self.rename_button.setEnabled(not is_busy)
-        self.auto_rename_button.setEnabled(not is_busy)
+        self.rename_button.setEnabled(not is_busy and not self._test_mode)
+        self.auto_rename_button.setEnabled(not is_busy and not self._test_mode)
         if self._test_mode:
-            self.rename_button.setEnabled(False)
-            self.auto_rename_button.setEnabled(False)
+            for button in (self.rename_button, self.auto_rename_button):
+                button.setToolTip(TEST_MODE_DISABLED_MESSAGE)
 
     def _render(self) -> None:
         self.status_label.setText(self._view_model.status_message)
+        self.summary_pc_name.set_value(self._view_model.pc_name)
+        self.summary_windows.set_value(self._view_model.windows_version)
+        self.summary_user.set_value(self._view_model.user_name)
         self.pc_name.setText(self._view_model.pc_name)
         self.user_name.setText(self._view_model.user_name)
         self.windows.setText(self._view_model.windows_version)
@@ -185,31 +230,17 @@ class PcInfoPanel(QWidget):
         self.ram.setText(self._view_model.ram)
         self.gpu.setText(self._view_model.gpu)
         self.tpm_version.setText(self._view_model.tpm_version)
-        self.tpm_status.setText(self._view_model.tpm_status_text)
-        self.secure_boot.setText(self._view_model.secure_boot_status_text)
-        self.boot_mode.setText(self._view_model.boot_mode)
+        self.tpm_status.set_status(self._view_model.tpm_status_text)
+        self.secure_boot.set_status(self._view_model.secure_boot_status_text, badge_tone_from_status(self._view_model.secure_boot_status_text))
+        self.boot_mode.set_status(self._view_model.boot_mode)
         self.disk_table.setRowCount(len(self._view_model.disks))
         for row_index, row in enumerate(self._view_model.disks):
             for column_index, value in enumerate(row):
-                self.disk_table.setItem(row_index, column_index, QTableWidgetItem(value))
+                self.disk_table.setItem(row_index, column_index, table_item(value))
 
 
-def _read_only() -> QLineEdit:
-    widget = QLineEdit()
-    widget.setReadOnly(True)
-    return widget
-
-
-def _label(text: str) -> QLabel:
-    label = QLabel(text)
+def _add_badge_row(grid: QGridLayout, row: int, label_text: str, widget: QWidget) -> None:
+    label = QLabel(label_text)
     label.setObjectName("fieldLabel")
-    return label
-
-
-def _add_field(grid: QGridLayout, row: int, column: int, label: str, widget: QWidget, colspan: int = 1) -> None:
-    container = QWidget()
-    layout = QVBoxLayout(container)
-    layout.setContentsMargins(0, 0, 0, 8)
-    layout.addWidget(_label(label))
-    layout.addWidget(widget)
-    grid.addWidget(container, row, column, 1, colspan)
+    grid.addWidget(label, row, 0)
+    grid.addWidget(widget, row, 1)

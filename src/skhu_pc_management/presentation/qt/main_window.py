@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout, QWidget
 
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
@@ -11,6 +11,8 @@ from skhu_pc_management.presentation.qt.panels.network_panel import NetworkPanel
 from skhu_pc_management.presentation.qt.panels.pc_info_panel import PcInfoPanel
 from skhu_pc_management.presentation.qt.startup_coordinator import StartupCoordinator
 from skhu_pc_management.presentation.qt.styles import APP_QSS
+from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge
+from skhu_pc_management.presentation.qt.widgets.buttons import nav_button
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
@@ -45,24 +47,20 @@ class MainWindow(QMainWindow):
         self.is_busy = self._busy_coordinator.is_busy
         self.busy_message = self._busy_coordinator.message
 
-        self.windows_badge = QLabel("Windows: 알 수 없음")
-        self.windows_badge.setObjectName("windowsBadge")
-        self.pc_badge = QLabel("PC: 알 수 없음")
-        self.pc_badge.setObjectName("pcBadge")
-        self.busy_card = QFrame()
-        self.busy_card.setObjectName("busyCard")
-        self.busy_card.setVisible(False)
-        busy_layout = QVBoxLayout(self.busy_card)
-        busy_layout.setContentsMargins(10, 8, 10, 8)
+        self.windows_badge = StatusBadge("Windows: 알 수 없음", "info")
+        self.pc_badge = StatusBadge("PC: 알 수 없음", "neutral")
+        self.test_mode_badge = StatusBadge("테스트 모드", "warning")
+        self.test_mode_badge.setVisible(test_mode)
+
+        self.busy_banner = QFrame()
+        self.busy_banner.setObjectName("infoBanner")
+        self.busy_banner.setVisible(False)
+        busy_layout = QVBoxLayout(self.busy_banner)
+        busy_layout.setContentsMargins(14, 10, 14, 10)
         self.status_label = QLabel("")
-        self.status_label.setObjectName("busyLabel")
+        self.status_label.setObjectName("mutedText")
         busy_layout.addWidget(self.status_label)
 
-        self.test_mode_label = QLabel(TEST_MODE_DISABLED_MESSAGE if test_mode else "")
-        self.test_mode_label.setVisible(test_mode)
-        self.test_mode_label.setObjectName("busyLabel")
-
-        self.tabs = QTabWidget()
         self.pc_info_panel = PcInfoPanel(pc_info_view_model, self._busy_coordinator, test_mode=test_mode)
         self.action_center_panel = ActionCenterPanel(
             settings_view_model,
@@ -74,36 +72,94 @@ class MainWindow(QMainWindow):
             test_mode=test_mode,
         )
         self.network_panel = NetworkPanel(network_view_model, self._busy_coordinator, test_mode=test_mode)
-        self.tabs.addTab(self.pc_info_panel, "PC 정보")
-        self.tabs.addTab(self.action_center_panel, "작업 센터")
-        self.tabs.addTab(self.network_panel, "네트워크")
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.pc_info_panel)
+        self.stack.addWidget(self.action_center_panel)
+        self.stack.addWidget(self.network_panel)
+
+        self.nav_buttons = [
+            nav_button("PC 정보"),
+            nav_button("작업 센터"),
+            nav_button("네트워크"),
+        ]
+        for index, button in enumerate(self.nav_buttons):
+            button.clicked.connect(lambda checked=False, page_index=index: self._select_page(page_index))
 
         central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
-        layout.addWidget(self._header())
-        layout.addWidget(self.busy_card)
-        layout.addWidget(self.test_mode_label)
-        layout.addWidget(self.tabs)
+        central.setObjectName("appShell")
+        shell = QVBoxLayout(central)
+        shell.setContentsMargins(16, 16, 16, 16)
+        shell.setSpacing(14)
+        shell.addWidget(self._top_bar())
+        shell.addWidget(self.busy_banner)
+        if test_mode:
+            test_banner = QFrame()
+            test_banner.setObjectName("warningBanner")
+            test_layout = QVBoxLayout(test_banner)
+            test_layout.setContentsMargins(14, 10, 14, 10)
+            test_text = QLabel(TEST_MODE_DISABLED_MESSAGE)
+            test_text.setObjectName("mutedText")
+            test_layout.addWidget(test_text)
+            shell.addWidget(test_banner)
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        body.addWidget(self._side_nav(), 0)
+        body.addWidget(self._content_surface(), 1)
+        shell.addLayout(body, 1)
         self.setCentralWidget(central)
         self.resize(1350, 1020)
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(1000, 700)
+        self._select_page(0)
         self._apply_branding()
         QTimer.singleShot(0, self.initialize_startup)
 
-    def _header(self) -> QWidget:
+    def _top_bar(self) -> QWidget:
         frame = QFrame()
-        frame.setObjectName("headerCard")
+        frame.setObjectName("topBar")
         layout = QHBoxLayout(frame)
-        layout.setContentsMargins(12, 12, 12, 12)
-        title = QLabel("SKHU PC Management")
-        title.setObjectName("headerTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(18, 14, 18, 14)
+        title_column = QVBoxLayout()
+        title_column.setSpacing(2)
+        title = QLabel("성공회대학교 PC 관리 프로그램")
+        title.setObjectName("appTitle")
+        subtitle = QLabel("SKHU PC Management")
+        subtitle.setObjectName("appSubtitle")
+        title_column.addWidget(title)
+        title_column.addWidget(subtitle)
+        layout.addLayout(title_column)
         layout.addStretch()
         layout.addWidget(self.windows_badge)
         layout.addWidget(self.pc_badge)
+        layout.addWidget(self.test_mode_badge)
         return frame
+
+    def _side_nav(self) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("sideNav")
+        frame.setFixedWidth(210)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        for button in self.nav_buttons:
+            layout.addWidget(button)
+        layout.addStretch()
+        return frame
+
+    def _content_surface(self) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("contentSurface")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(0)
+        layout.addWidget(self.stack)
+        return frame
+
+    def _select_page(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        for button_index, button in enumerate(self.nav_buttons):
+            button.setProperty("selected", "true" if button_index == index else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def initialize_startup(self) -> None:
         if not self._busy_coordinator.try_begin("초기 정보를 불러오는 중..."):
@@ -138,13 +194,15 @@ class MainWindow(QMainWindow):
     def _on_busy_changed(self, is_busy: bool, message: str) -> None:
         self.is_busy = is_busy
         self.busy_message = message
-        self.busy_card.setVisible(is_busy)
+        self.busy_banner.setVisible(is_busy)
         self.status_label.setText(message)
-        self.tabs.setEnabled(not is_busy)
+        self.stack.setEnabled(not is_busy)
+        for button in self.nav_buttons:
+            button.setEnabled(not is_busy)
 
     def _update_header_badges(self) -> None:
-        self.windows_badge.setText(self._pc_info_view_model.windows_version)
-        self.pc_badge.setText(self._pc_info_view_model.pc_name)
+        self.windows_badge.set_status(self._pc_info_view_model.windows_version or "Windows: 알 수 없음", "info")
+        self.pc_badge.set_status(self._pc_info_view_model.pc_name or "PC: 알 수 없음", "neutral")
 
     def _apply_branding(self) -> None:
         if self._resource_resolver is None:
