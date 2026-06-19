@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Any, Iterable
 
 from skhu_pc_management.domain.settings.definitions import (
     DEFAULT_SETTING_DEFINITIONS_BY_ID,
@@ -21,6 +21,8 @@ class ApplySettings:
     registry: Registry
     command_runner: CommandRunner
     safety_guard: SafetyGuard = field(default_factory=SafetyGuard)
+    system_settings_actions: Any | None = None
+    apply_taskbar_layout_use_case: Any | None = None
     definitions_by_id: dict[str, SettingDefinition] = field(
         default_factory=lambda: dict(DEFAULT_SETTING_DEFINITIONS_BY_ID)
     )
@@ -76,6 +78,38 @@ class ApplySettings:
         return ApplySettingsResult(results=results)
 
     def _apply_definition(self, definition: SettingDefinition) -> ApplyResult:
+        if definition.setting_id in {"set_default_wallpaper", "delete_edge_shortcut"}:
+            if self.system_settings_actions is None:
+                return ApplyResult(
+                    setting_id=definition.setting_id,
+                    name=definition.name,
+                    success=False,
+                    status="failed",
+                    message="시스템 설정 작업 기능이 구성되지 않았습니다.",
+                )
+            return self.system_settings_actions.execute(definition.setting_id, definition.name)
+
+        if definition.setting_id == "disable_password_expiration" and self.system_settings_actions is not None:
+            return self.system_settings_actions.execute(definition.setting_id, definition.name)
+
+        if definition.setting_id == "set_taskbar_icons":
+            if self.apply_taskbar_layout_use_case is None:
+                return ApplyResult(
+                    setting_id=definition.setting_id,
+                    name=definition.name,
+                    success=False,
+                    status="failed",
+                    message="작업표시줄 설정 적용 기능이 구성되지 않았습니다.",
+                )
+            result = self.apply_taskbar_layout_use_case.execute(dry_run=False)
+            return ApplyResult(
+                setting_id=definition.setting_id,
+                name=definition.name,
+                success=result.success,
+                status="applied" if result.success else "failed",
+                message=result.message,
+            )
+
         try:
             for registry_value in definition.registry_values:
                 self.registry.write_value(

@@ -28,6 +28,8 @@ class MainWindow(QMainWindow):
         pc_check_view_model: PcCheckViewModel,
         activation_view_model: ActivationViewModel,
         startup_coordinator: StartupCoordinator,
+        launch_program_use_case: object | None = None,
+        maintenance_use_case: object | None = None,
         resource_resolver: ResourceResolver | None = None,
         test_mode: bool = False,
     ) -> None:
@@ -61,11 +63,13 @@ class MainWindow(QMainWindow):
         self.test_mode_label.setObjectName("busyLabel")
 
         self.tabs = QTabWidget()
-        self.pc_info_panel = PcInfoPanel(pc_info_view_model, self._busy_coordinator)
+        self.pc_info_panel = PcInfoPanel(pc_info_view_model, self._busy_coordinator, test_mode=test_mode)
         self.action_center_panel = ActionCenterPanel(
             settings_view_model,
             pc_check_view_model,
             activation_view_model,
+            launch_program_use_case,
+            maintenance_use_case,
             self._busy_coordinator,
             test_mode=test_mode,
         )

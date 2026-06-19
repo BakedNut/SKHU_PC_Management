@@ -41,15 +41,15 @@ SETTING_SECTIONS: tuple[tuple[str, tuple[SettingOption, ...]], ...] = (
         (
             # TODO: Port default wallpaper behavior from C# SettingsApplyService.cs
             # and WindowsSystemService.cs.
-            SettingOption("기본 배경화면 설정", None),
+            SettingOption("기본 배경화면 설정", "set_default_wallpaper"),
             SettingOption("바탕화면 '내 PC' 아이콘 표시", "show_this_pc_on_desktop"),
             SettingOption("바탕화면 '제어판' 아이콘 표시", "show_control_panel_on_desktop"),
             # TODO: Compare this policy-based Python mapping with C#
             # WindowsSystemService.DeleteEdgeShortcuts.
-            SettingOption("바탕화면 Edge 바로가기 삭제", "disable_edge_desktop_shortcut_policy"),
+            SettingOption("바탕화면 Edge 바로가기 삭제", "delete_edge_shortcut"),
             # TODO: Integrate checkbox-driven taskbar icon apply with C#
             # TaskbarIconService.cs and MainViewModel.Settings.cs.
-            SettingOption("작업표시줄 아이콘 설정", None),
+            SettingOption("작업표시줄 아이콘 설정", "set_taskbar_icons"),
             SettingOption("부팅 시 암호 입력 생략 설정 활성화", "enable_passwordless_signin"),
             SettingOption("빠른 시작 켜기 비활성화", "disable_fast_startup"),
             SettingOption("사용자 계정 암호 만료 비활성화", "disable_password_expiration"),
@@ -87,6 +87,8 @@ class ActionCenterPanel(QWidget):
         settings_view_model: SettingsViewModel,
         pc_check_view_model: PcCheckViewModel,
         activation_view_model: ActivationViewModel,
+        launch_program_use_case: object | None = None,
+        maintenance_use_case: object | None = None,
         busy_coordinator: BusyCoordinator | None = None,
         test_mode: bool = False,
     ) -> None:
@@ -94,10 +96,13 @@ class ActionCenterPanel(QWidget):
         self._settings = settings_view_model
         self._pc_check = pc_check_view_model
         self._activation = activation_view_model
+        self._launch_program_use_case = launch_program_use_case
+        self._maintenance_use_case = maintenance_use_case
         self._busy_coordinator = busy_coordinator
         self._test_mode = test_mode
         self._checkboxes: dict[str, QCheckBox] = {}
         self._win11_only_checkboxes: list[QCheckBox] = []
+        self._danger_buttons: list[QPushButton] = []
 
         root = QGridLayout(self)
         root.setColumnStretch(0, 115)
@@ -247,18 +252,19 @@ class ActionCenterPanel(QWidget):
     def _quick_tools_card(self) -> QWidget:
         card, layout = make_card("즉시 실행 도구")
         grid = QGridLayout()
-        labels = (
-            "휴지통 비우기",
-            "Chrome 실행",
-            "Edge 실행",
-            "팟플레이어 실행",
-            "반디집 실행",
-            "Chrome 기록 삭제",
-            "Edge 기록 삭제",
+        actions = (
+            ("휴지통 비우기", lambda: self._run_maintenance("empty_recycle_bin")),
+            ("Chrome 실행", lambda: self._launch_program("chrome")),
+            ("Edge 실행", lambda: self._launch_program("edge")),
+            ("팟플레이어 실행", lambda: self._launch_program("potplayer")),
+            ("반디집 실행", lambda: self._launch_program("bandizip")),
+            ("Chrome 기록 삭제", lambda: self._run_maintenance("delete_chrome_history")),
+            ("Edge 기록 삭제", lambda: self._run_maintenance("delete_edge_history")),
         )
-        for index, label in enumerate(labels):
+        for index, (label, callback) in enumerate(actions):
             button = QPushButton(label)
-            button.clicked.connect(self._show_actions_todo)
+            button.clicked.connect(callback)
+            self._danger_buttons.append(button)
             grid.addWidget(button, index // 3, index % 3)
         layout.addLayout(grid)
         return card
@@ -281,8 +287,8 @@ class ActionCenterPanel(QWidget):
         shutdown_row.addStretch()
         layout.addLayout(power_row)
         layout.addLayout(shutdown_row)
-        self.power_apply_button.clicked.connect(self._show_maintenance_todo)
-        self.shutdown_apply_button.clicked.connect(self._show_maintenance_todo)
+        self.power_apply_button.clicked.connect(lambda: self._run_maintenance("set_power_never"))
+        self.shutdown_apply_button.clicked.connect(lambda: self._run_maintenance("set_auto_shutdown_at_23"))
         return card
 
     def render(self) -> None:
@@ -382,22 +388,61 @@ class ActionCenterPanel(QWidget):
     def _sync_status_summaries(self) -> None:
         for name, status, detail in self._pc_check.result_rows:
             text = detail or status
-            if "전원" in name:
-                self.power_status_label.setText(text)
-            if "자동종료" in name or "자동 종료" in name:
-                self.shutdown_status_label.setText(text)
-            if "Office" in name:
-                self.office_status_label.setText(f"설치된 Office 상태: {detail or status}")
+        self.power_status_label.setText(self._pc_check.power_option_status_text)
+        self.shutdown_status_label.setText(self._pc_check.auto_shutdown_status_text)
+        self.office_status_label.setText(f"설치된 Office 상태: {self._pc_check.installed_office_status_text}")
 
-    def _show_actions_todo(self) -> None:
-        # TODO: Port C# ViewModels/PcActionsViewModel.cs, Services/PcProgramLaunchService.cs,
-        # ViewModels/PcMaintenanceViewModel.cs, and Services/PcMaintenanceService.cs.
-        QMessageBox.information(self, "미구현", NOT_IMPLEMENTED_MESSAGE)
+    def _launch_program(self, program_id: str) -> None:
+        if self._launch_program_use_case is None:
+            QMessageBox.information(self, "미구성", "프로그램 실행 기능이 구성되지 않았습니다.")
+            return
+        if self._busy_coordinator and not self._busy_coordinator.try_begin("프로그램을 실행하는 중..."):
+            return
+        try:
+            result = self._launch_program_use_case.execute(program_id)
+            self._show_result(result)
+            self._refresh_after_action()
+        finally:
+            if self._busy_coordinator:
+                self._busy_coordinator.end("작업이 완료되었습니다.")
 
-    def _show_maintenance_todo(self) -> None:
-        # TODO: Port C# Services/PcMaintenanceService.cs SetPowerNever/SetAutoShutdownAt23
-        # and ViewModels/PcMaintenanceViewModel.cs.
-        QMessageBox.information(self, "미구현", NOT_IMPLEMENTED_MESSAGE)
+    def _run_maintenance(self, action: str) -> None:
+        if self._maintenance_use_case is None:
+            QMessageBox.information(self, "미구성", "PC 유지보수 기능이 구성되지 않았습니다.")
+            return
+        if self._busy_coordinator and not self._busy_coordinator.try_begin("PC 유지보수 작업을 실행하는 중..."):
+            return
+        try:
+            if action == "empty_recycle_bin":
+                result = self._maintenance_use_case.empty_recycle_bin()
+            elif action == "delete_chrome_history":
+                result = self._maintenance_use_case.delete_browser_history("chrome")
+            elif action == "delete_edge_history":
+                result = self._maintenance_use_case.delete_browser_history("edge")
+            elif action == "set_power_never":
+                result = self._maintenance_use_case.set_power_never()
+            elif action == "set_auto_shutdown_at_23":
+                result = self._maintenance_use_case.set_auto_shutdown_at_23()
+            else:
+                raise ValueError(f"Unsupported maintenance action: {action}")
+            self._show_result(result)
+            self._refresh_after_action()
+        finally:
+            if self._busy_coordinator:
+                self._busy_coordinator.end("작업이 완료되었습니다.")
+
+    def _refresh_after_action(self) -> None:
+        self._settings.check_status(self._settings.all_setting_ids())
+        self._pc_check.run_checks()
+        self.render()
+
+    def _show_result(self, result: object) -> None:
+        message = getattr(result, "message", "")
+        success = bool(getattr(result, "success", False))
+        if success:
+            QMessageBox.information(self, "완료", message)
+        else:
+            QMessageBox.warning(self, "실패", message)
 
     def _apply_test_mode(self) -> None:
         if not self._test_mode:
@@ -408,6 +453,7 @@ class ActionCenterPanel(QWidget):
             self.office_activation_button,
             self.power_apply_button,
             self.shutdown_apply_button,
+            *self._danger_buttons,
         ):
             button.setEnabled(False)
             button.setToolTip(TEST_MODE_DISABLED_MESSAGE)

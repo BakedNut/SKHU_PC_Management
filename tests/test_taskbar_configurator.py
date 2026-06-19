@@ -7,6 +7,15 @@ from skhu_pc_management.application.use_cases.validate_taskbar_resources import 
 from skhu_pc_management.infrastructure.windows.windows_taskbar_configurator import WindowsTaskbarConfigurator
 
 
+class FakeCommandRunner:
+    def __init__(self) -> None:
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(self, command: tuple[str, ...]) -> str:
+        self.commands.append(tuple(command))
+        return ""
+
+
 class FakeResourceResolver:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -83,7 +92,7 @@ def test_taskbar_dry_run_does_not_modify_files_or_run_system_commands(tmp_path: 
     assert shortcut.read_text(encoding="utf-8") == "shortcut"
 
 
-def test_taskbar_real_apply_is_blocked_until_explicit_implementation(tmp_path: Path) -> None:
+def test_taskbar_real_apply_requires_command_runner(tmp_path: Path) -> None:
     resources = tmp_path / "resources"
     taskbar_dir = resources / "TaskBar"
     taskbar_dir.mkdir(parents=True)
@@ -94,4 +103,36 @@ def test_taskbar_real_apply_is_blocked_until_explicit_implementation(tmp_path: P
     result = configurator.apply_taskbar_layout(dry_run=False)
 
     assert result.success is False
-    assert "아직 구현되지 않았습니다" in result.message
+    assert "명령 실행기가 구성되지 않았습니다" in result.message
+
+
+def test_taskbar_real_apply_uses_temp_appdata_and_fake_commands(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    shortcut = taskbar_dir / "Google Chrome.lnk"
+    shortcut.write_text("shortcut", encoding="utf-8")
+
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target_dir.mkdir(parents=True)
+    old_shortcut = target_dir / "Old.lnk"
+    old_shortcut.write_text("old", encoding="utf-8")
+
+    command_runner = FakeCommandRunner()
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = configurator.apply_taskbar_layout(dry_run=False)
+
+    assert result.success is True
+    assert result.dry_run is False
+    assert not old_shortcut.exists()
+    assert (target_dir / "Google Chrome.lnk").read_text(encoding="utf-8") == "shortcut"
+    assert command_runner.commands == [
+        ("reg", "import", str(reg_file)),
+        ("taskkill", "/F", "/IM", "explorer.exe"),
+        ("explorer.exe",),
+    ]

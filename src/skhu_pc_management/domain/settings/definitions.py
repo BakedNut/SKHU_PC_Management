@@ -72,7 +72,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="hide_recent_files",
-        name="최근 사용 항목 숨김",
+        name="최근 사용한 항목 숨김",
         registry_values=(
             _registry(
                 "hide_recent_files",
@@ -86,7 +86,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="explorer_launch_to_this_pc",
-        name="탐색기 시작 위치를 내 PC로 설정",
+        name="탐색기 실행 시 '내 PC'로",
         registry_values=(
             _registry(
                 "explorer_launch_to_this_pc",
@@ -128,7 +128,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="show_this_pc_on_desktop",
-        name="바탕화면 내 PC 표시",
+        name="바탕화면 '내 PC' 아이콘 표시",
         registry_values=(
             _registry(
                 "show_this_pc_on_desktop",
@@ -142,7 +142,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="show_control_panel_on_desktop",
-        name="바탕화면 제어판 표시",
+        name="바탕화면 '제어판' 아이콘 표시",
         registry_values=(
             _registry(
                 "show_control_panel_on_desktop",
@@ -156,7 +156,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="enable_passwordless_signin",
-        name="부팅 시 암호 입력 생략",
+        name="부팅 시 암호 입력 생략 설정 활성화",
         registry_values=(
             _registry(
                 "enable_passwordless_signin",
@@ -170,7 +170,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="disable_fast_startup",
-        name="빠른 시작 비활성화",
+        name="빠른 시작 켜기 비활성화",
         registry_values=(
             _registry(
                 "disable_fast_startup",
@@ -184,8 +184,8 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
         requires_user_parameter_update=False,
     ),
     SettingDefinition(
-        setting_id="disable_edge_desktop_shortcut_policy",
-        name="Edge 바로가기 생성 정책 비활성화",
+        setting_id="delete_edge_shortcut",
+        name="바탕화면 Edge 바로가기 삭제",
         registry_values=(
             _registry(
                 "disable_edge_desktop_shortcut_policy",
@@ -230,7 +230,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="win11_start_more_pins",
-        name="Win11 시작 메뉴: 고정된 항목 더 보기",
+        name="시작 메뉴: 고정된 항목 더 보기",
         registry_values=(
             _registry(
                 "win11_start_more_pins",
@@ -245,7 +245,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="win11_hide_recent_apps",
-        name="Win11 시작 메뉴: 최근 추가 앱 숨김",
+        name="시작 메뉴: 최근 추가 앱 숨김",
         registry_values=(
             _registry(
                 "win11_hide_recent_apps",
@@ -260,7 +260,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="win11_hide_frequent_apps",
-        name="Win11 시작 메뉴: 자주 사용 앱 숨김",
+        name="시작 메뉴: 자주 사용 앱 숨김",
         registry_values=(
             _registry(
                 "win11_hide_frequent_apps",
@@ -275,7 +275,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="win11_hide_recommended_files",
-        name="Win11 시작 메뉴: 추천 파일 숨김",
+        name="시작 메뉴: 추천 파일 숨김",
         registry_values=(
             _registry(
                 "win11_hide_recommended_files",
@@ -290,7 +290,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="win11_hide_iris_recommendations",
-        name="Win11 시작 메뉴: 팁/권장 사항 숨김",
+        name="시작 메뉴: 팁/권장 사항 숨김",
         registry_values=(
             _registry(
                 "win11_hide_iris_recommendations",
@@ -305,7 +305,7 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     ),
     SettingDefinition(
         setting_id="win11_hide_account_notifications",
-        name="Win11 시작 메뉴: 계정 알림 숨김",
+        name="시작 메뉴: 계정 알림 숨김",
         registry_values=(
             _registry(
                 "win11_hide_account_notifications",
@@ -323,6 +323,17 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
         name="사용자 계정 암호 만료 비활성화",
         post_commands=(DISABLE_PASSWORD_EXPIRATION_COMMAND,),
         requires_user_parameter_update=False,
+    ),
+    SettingDefinition(
+        setting_id="set_default_wallpaper",
+        name="기본 배경화면 설정",
+        requires_user_parameter_update=False,
+    ),
+    SettingDefinition(
+        setting_id="set_taskbar_icons",
+        name="작업표시줄 아이콘 설정",
+        requires_user_parameter_update=False,
+        requires_explorer_restart=True,
     ),
 )
 

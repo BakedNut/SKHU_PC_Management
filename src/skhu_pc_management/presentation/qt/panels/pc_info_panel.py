@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QInputDialog,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -21,10 +22,16 @@ NOT_IMPLEMENTED_MESSAGE = "아직 Python 마이그레이션에서 구현되지 �
 
 
 class PcInfoPanel(QWidget):
-    def __init__(self, view_model: PcInfoViewModel, busy_coordinator: BusyCoordinator | None = None) -> None:
+    def __init__(
+        self,
+        view_model: PcInfoViewModel,
+        busy_coordinator: BusyCoordinator | None = None,
+        test_mode: bool = False,
+    ) -> None:
         super().__init__()
         self._view_model = view_model
         self._busy_coordinator = busy_coordinator
+        self._test_mode = test_mode
 
         self.status_label = QLabel(view_model.status_message)
         self.refresh_button = QPushButton("PC 정보 새로고침")
@@ -70,8 +77,8 @@ class PcInfoPanel(QWidget):
         root_layout.addLayout(right, 0, 1)
 
         self.refresh_button.clicked.connect(self._refresh)
-        self.rename_button.clicked.connect(self._show_rename_todo)
-        self.auto_rename_button.clicked.connect(self._show_rename_todo)
+        self.rename_button.clicked.connect(self._rename_pc)
+        self.auto_rename_button.clicked.connect(self._auto_rename_pc)
 
     def _system_card(self) -> QWidget:
         card, layout = make_card("시스템 정보")
@@ -132,11 +139,30 @@ class PcInfoPanel(QWidget):
             if self._busy_coordinator:
                 self._busy_coordinator.end(self._view_model.status_message)
 
-    def _show_rename_todo(self) -> None:
-        # TODO: Port C# flow from Services/PcRenameFlowService.cs,
-        # Services/PcRenameService.cs, Services/PcRenamePresentationService.cs,
-        # and ViewModels/MainViewModel.PcInfo.cs.
-        QMessageBox.information(self, "미구현", NOT_IMPLEMENTED_MESSAGE)
+    def _rename_pc(self) -> None:
+        if self._test_mode:
+            QMessageBox.information(self, "테스트 모드", "테스트 모드에서는 실제 설정 변경 기능이 비활성화됩니다.")
+            return
+        new_name, accepted = QInputDialog.getText(self, "PC 이름 변경", "새 PC 이름")
+        if not accepted:
+            return
+        result = self._view_model.rename_pc(new_name)
+        self._show_rename_result(result)
+
+    def _auto_rename_pc(self) -> None:
+        if self._test_mode:
+            QMessageBox.information(self, "테스트 모드", "테스트 모드에서는 실제 설정 변경 기능이 비활성화됩니다.")
+            return
+        result = self._view_model.auto_rename_pc()
+        self._show_rename_result(result)
+
+    def _show_rename_result(self, result: object | None) -> None:
+        self._render()
+        message = getattr(result, "message", self._view_model.status_message)
+        if getattr(result, "success", False):
+            QMessageBox.information(self, "재부팅 필요", f"{message}\n재부팅 후 적용됩니다.")
+        else:
+            QMessageBox.warning(self, "PC 이름 변경 실패", message)
 
     def render(self) -> None:
         self._render()
@@ -145,6 +171,9 @@ class PcInfoPanel(QWidget):
         self.refresh_button.setEnabled(not is_busy)
         self.rename_button.setEnabled(not is_busy)
         self.auto_rename_button.setEnabled(not is_busy)
+        if self._test_mode:
+            self.rename_button.setEnabled(False)
+            self.auto_rename_button.setEnabled(False)
 
     def _render(self) -> None:
         self.status_label.setText(self._view_model.status_message)

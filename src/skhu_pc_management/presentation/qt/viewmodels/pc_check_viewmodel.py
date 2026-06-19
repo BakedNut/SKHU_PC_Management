@@ -9,6 +9,9 @@ class PcCheckViewModel:
     run_pc_checks_use_case: Any
     status_message: str = "PC 점검을 실행하지 않았습니다."
     result_rows: list[tuple[str, str, str]] = field(default_factory=list)
+    installed_office_status_text: str = "미확인"
+    power_option_status_text: str = "미확인"
+    auto_shutdown_status_text: str = "미확인"
     is_busy: bool = False
 
     def run_checks(self) -> None:
@@ -23,12 +26,25 @@ class PcCheckViewModel:
                 (result.label or result.name, _display_status(result.status), _display_message(result.message))
                 for result in results
             ]
+            self._update_summary_statuses(results)
             self.status_message = f"PC 점검 완료: {len(results)}개 항목"
         except Exception as exc:
             self.result_rows = []
             self.status_message = f"PC 점검 실패: {exc}"
         finally:
             self.is_busy = False
+
+    def _update_summary_statuses(self, results: list[Any]) -> None:
+        for result in results:
+            message = _display_message(result.message)
+            status = _display_status(result.status)
+            summary = message or status
+            if result.check_id == "office_install":
+                self.installed_office_status_text = summary
+            elif result.check_id == "power_settings":
+                self.power_option_status_text = summary
+            elif result.check_id == "auto_shutdown_schedule":
+                self.auto_shutdown_status_text = summary
 
 
 _STATUS_LABELS = {

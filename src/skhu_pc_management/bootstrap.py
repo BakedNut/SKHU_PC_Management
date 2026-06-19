@@ -10,7 +10,10 @@ from skhu_pc_management.application.use_cases.apply_static_ip import ApplyStatic
 from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
 from skhu_pc_management.application.use_cases.check_settings_status import CheckSettingsStatus
 from skhu_pc_management.application.use_cases.list_network_adapters import ListNetworkAdapters
+from skhu_pc_management.application.use_cases.launch_program import LaunchProgram
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo
+from skhu_pc_management.application.use_cases.rename_pc import RenamePc
+from skhu_pc_management.application.use_cases.run_pc_maintenance import RunPcMaintenance
 from skhu_pc_management.application.use_cases.run_pc_checks import (
     AutoShutdownScheduleCheck,
     BrowserHistoryCheck,
@@ -21,6 +24,7 @@ from skhu_pc_management.application.use_cases.run_pc_checks import (
     RunPcChecks,
 )
 from skhu_pc_management.application.use_cases.set_dhcp import SetDhcp
+from skhu_pc_management.application.use_cases.system_settings_actions import SystemSettingsActions
 from skhu_pc_management.application.use_cases.validate_taskbar_resources import ValidateTaskbarResources
 from skhu_pc_management.infrastructure.license.embedded_product_key_provider import EmbeddedProductKeyProvider
 from skhu_pc_management.infrastructure.windows.browser_data_reader import WindowsBrowserDataReader
@@ -33,8 +37,12 @@ from skhu_pc_management.infrastructure.windows.recycle_bin_reader import Windows
 from skhu_pc_management.infrastructure.windows.subprocess_command_runner import SubprocessCommandRunner
 from skhu_pc_management.infrastructure.windows.windows_admin_privilege_checker import WindowsAdminPrivilegeChecker
 from skhu_pc_management.infrastructure.windows.windows_clipboard import WindowsClipboard
+from skhu_pc_management.infrastructure.windows.windows_pc_renamer import WindowsPcRenamer
+from skhu_pc_management.infrastructure.windows.windows_program_launcher import WindowsProgramLauncher
 from skhu_pc_management.infrastructure.windows.windows_process_launcher import WindowsProcessLauncher
 from skhu_pc_management.infrastructure.windows.windows_scheduled_task_reader import WindowsScheduledTaskReader
+from skhu_pc_management.infrastructure.windows.windows_system_maintenance import WindowsSystemMaintenance
+from skhu_pc_management.infrastructure.windows.windows_system_settings_operator import WindowsSystemSettingsOperator
 from skhu_pc_management.infrastructure.windows.windows_taskbar_configurator import WindowsTaskbarConfigurator
 from skhu_pc_management.infrastructure.windows.winreg_registry import WinregRegistry
 from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import WmiPcInfoReader
@@ -59,7 +67,11 @@ def create_main_window() -> MainWindow:
     resource_resolver = PyInstallerResourceResolver()
 
     network_configurator = NetshNetworkConfigurator(command_runner)
-    taskbar_configurator = WindowsTaskbarConfigurator(resource_resolver)
+    taskbar_configurator = WindowsTaskbarConfigurator(resource_resolver, command_runner)
+    pc_renamer = WindowsPcRenamer(command_runner)
+    program_launcher = WindowsProgramLauncher(registry, process_launcher)
+    system_maintenance = WindowsSystemMaintenance(command_runner)
+    system_settings_operator = WindowsSystemSettingsOperator(registry, command_runner)
     installed_program_reader = WindowsInstalledProgramReader(registry)
     latest_version_provider = WindowsLatestVersionProvider()
     browser_data_reader = WindowsBrowserDataReader()
@@ -69,12 +81,22 @@ def create_main_window() -> MainWindow:
 
     load_pc_info = LoadPcInfo(WmiPcInfoReader(registry=registry, command_runner=command_runner))
     check_settings_status = CheckSettingsStatus(registry)
-    apply_settings = ApplySettings(registry, command_runner, safety_guard=safety_guard)
     validate_taskbar_resources = ValidateTaskbarResources(taskbar_configurator)
     apply_taskbar_layout = ApplyTaskbarLayout(taskbar_configurator, safety_guard=safety_guard)
+    system_settings_actions = SystemSettingsActions(system_settings_operator, safety_guard=safety_guard)
+    apply_settings = ApplySettings(
+        registry,
+        command_runner,
+        safety_guard=safety_guard,
+        system_settings_actions=system_settings_actions,
+        apply_taskbar_layout_use_case=apply_taskbar_layout,
+    )
     list_network_adapters = ListNetworkAdapters(network_configurator)
     apply_static_ip = ApplyStaticIp(network_configurator, safety_guard=safety_guard)
     set_dhcp = SetDhcp(network_configurator, safety_guard=safety_guard)
+    rename_pc = RenamePc(pc_renamer, safety_guard=safety_guard)
+    launch_program = LaunchProgram(program_launcher, safety_guard=safety_guard)
+    run_pc_maintenance = RunPcMaintenance(system_maintenance, safety_guard=safety_guard)
     run_pc_checks = RunPcChecks(
         [
             RecycleBinCheck(recycle_bin_reader),
@@ -119,7 +141,7 @@ def create_main_window() -> MainWindow:
     )
     activate_windows = ActivateWindows(product_key_provider, clipboard, process_launcher, safety_guard=safety_guard)
     activate_office = ActivateOffice(product_key_provider, clipboard, process_launcher, safety_guard=safety_guard)
-    pc_info_view_model = PcInfoViewModel(load_pc_info)
+    pc_info_view_model = PcInfoViewModel(load_pc_info, rename_pc)
     settings_view_model = SettingsViewModel(
         check_settings_status,
         apply_settings,
@@ -140,6 +162,8 @@ def create_main_window() -> MainWindow:
         network_view_model=NetworkViewModel(list_network_adapters, apply_static_ip, set_dhcp),
         pc_check_view_model=pc_check_view_model,
         activation_view_model=ActivationViewModel(activate_windows, activate_office),
+        launch_program_use_case=launch_program,
+        maintenance_use_case=run_pc_maintenance,
         startup_coordinator=startup_coordinator,
         resource_resolver=resource_resolver,
         test_mode=test_mode,

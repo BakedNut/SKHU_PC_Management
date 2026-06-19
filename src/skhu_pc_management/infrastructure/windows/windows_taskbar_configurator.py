@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import shutil
 
 from skhu_pc_management.domain.resources.models import ResourceValidationResult, TaskbarApplyResult
+from skhu_pc_management.ports.command_runner import CommandRunner
 from skhu_pc_management.ports.resource_resolver import ResourceResolver
 
 
 @dataclass(frozen=True)
 class WindowsTaskbarConfigurator:
     resource_resolver: ResourceResolver
+    command_runner: CommandRunner | None = None
 
     def validate_resources(self) -> ResourceValidationResult:
         try:
@@ -81,9 +85,40 @@ class WindowsTaskbarConfigurator:
                 planned_actions=planned_actions,
             )
 
+        if self.command_runner is None:
+            return TaskbarApplyResult(
+                success=False,
+                message="작업표시줄 설정 적용을 위한 명령 실행기가 구성되지 않았습니다.",
+                dry_run=False,
+                reg_file=validation.reg_file,
+                shortcut_files=validation.shortcut_files,
+                planned_actions=planned_actions,
+            )
+
+        try:
+            target_dir = _taskbar_target_dir()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for shortcut in target_dir.glob("*.lnk"):
+                shortcut.unlink()
+            for shortcut in validation.shortcut_files:
+                shutil.copy2(shortcut, target_dir / shortcut.name)
+            if validation.reg_file is not None:
+                self.command_runner.run(("reg", "import", str(validation.reg_file)))
+            self.command_runner.run(("taskkill", "/F", "/IM", "explorer.exe"))
+            self.command_runner.run(("explorer.exe",))
+        except Exception as exc:
+            return TaskbarApplyResult(
+                success=False,
+                message=f"작업표시줄 설정 적용 실패: {exc}",
+                dry_run=False,
+                reg_file=validation.reg_file,
+                shortcut_files=validation.shortcut_files,
+                planned_actions=planned_actions,
+            )
+
         return TaskbarApplyResult(
-            success=False,
-            message="실제 작업표시줄 적용은 아직 구현되지 않았습니다. dry-run 결과를 확인한 뒤 별도 구현이 필요합니다.",
+            success=True,
+            message="작업표시줄 설정을 적용했습니다.",
             dry_run=False,
             reg_file=validation.reg_file,
             shortcut_files=validation.shortcut_files,
@@ -101,3 +136,10 @@ def _planned_actions(validation: ResourceValidationResult) -> tuple[str, ...]:
         actions.append(f"레지스트리 적용 예정: {validation.reg_file}")
     actions.append("Explorer 재시작 예정")
     return tuple(actions)
+
+
+def _taskbar_target_dir() -> Path:
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        raise RuntimeError("APPDATA 환경변수를 찾을 수 없습니다.")
+    return Path(appdata) / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"

@@ -9,7 +9,11 @@ from skhu_pc_management.application.use_cases.activate_windows import ActivateWi
 from skhu_pc_management.application.use_cases.apply_settings import ApplySettings
 from skhu_pc_management.application.use_cases.apply_static_ip import ApplyStaticIp
 from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
+from skhu_pc_management.application.use_cases.launch_program import LaunchProgram
+from skhu_pc_management.application.use_cases.rename_pc import RenamePc
+from skhu_pc_management.application.use_cases.run_pc_maintenance import RunPcMaintenance
 from skhu_pc_management.application.use_cases.set_dhcp import SetDhcp
+from skhu_pc_management.application.use_cases.system_settings_actions import SystemSettingsActions
 from skhu_pc_management.domain.network.models import NetworkConfigResult, StaticIpConfig
 from skhu_pc_management.domain.resources.models import TaskbarApplyResult
 
@@ -93,6 +97,56 @@ class RecordingTaskbarConfigurator:
         return TaskbarApplyResult(True, "dry-run", dry_run=dry_run, planned_actions=("plan",))
 
 
+class RecordingPcRenamer:
+    def __init__(self) -> None:
+        self.names: list[str] = []
+
+    def rename(self, new_name: str) -> None:
+        self.names.append(new_name)
+
+
+class RecordingProgramLauncher:
+    def __init__(self) -> None:
+        self.program_ids: list[str] = []
+
+    def launch_program(self, program_id: str) -> bool:
+        self.program_ids.append(program_id)
+        return True
+
+
+class RecordingSystemMaintenance:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    def empty_recycle_bin(self) -> int:
+        self.calls.append(("empty_recycle_bin", None))
+        return 0
+
+    def delete_browser_history(self, browser_id: str) -> bool:
+        self.calls.append(("delete_browser_history", browser_id))
+        return True
+
+    def set_power_never(self) -> None:
+        self.calls.append(("set_power_never", None))
+
+    def set_auto_shutdown_at_23(self) -> None:
+        self.calls.append(("set_auto_shutdown_at_23", None))
+
+
+class RecordingSystemSettingsOperator:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def set_default_wallpaper(self) -> None:
+        self.calls.append("set_default_wallpaper")
+
+    def delete_edge_shortcuts(self) -> None:
+        self.calls.append("delete_edge_shortcuts")
+
+    def disable_password_expiration_for_all_users(self) -> None:
+        self.calls.append("disable_password_expiration_for_all_users")
+
+
 def test_test_mode_blocks_apply_settings_without_registry_or_commands() -> None:
     registry = RecordingRegistry()
     command_runner = RecordingCommandRunner()
@@ -153,3 +207,41 @@ def test_test_mode_allows_taskbar_dry_run_but_blocks_real_apply() -> None:
     assert blocked.success is False
     assert blocked.message == TEST_MODE_DISABLED_MESSAGE
     assert configurator.apply_requests == [True]
+
+
+def test_test_mode_blocks_pc_rename_program_launch_and_maintenance_calls() -> None:
+    guard = SafetyGuard(test_mode=True)
+    renamer = RecordingPcRenamer()
+    launcher = RecordingProgramLauncher()
+    maintenance = RecordingSystemMaintenance()
+
+    rename_result = RenamePc(renamer, safety_guard=guard).execute("PC-101")
+    launch_result = LaunchProgram(launcher, safety_guard=guard).execute("chrome")
+    recycle_result = RunPcMaintenance(maintenance, safety_guard=guard).empty_recycle_bin()
+    browser_result = RunPcMaintenance(maintenance, safety_guard=guard).delete_browser_history("chrome")
+    power_result = RunPcMaintenance(maintenance, safety_guard=guard).set_power_never()
+    shutdown_result = RunPcMaintenance(maintenance, safety_guard=guard).set_auto_shutdown_at_23()
+
+    assert rename_result.message == TEST_MODE_DISABLED_MESSAGE
+    assert launch_result.message == TEST_MODE_DISABLED_MESSAGE
+    assert recycle_result.message == TEST_MODE_DISABLED_MESSAGE
+    assert browser_result.message == TEST_MODE_DISABLED_MESSAGE
+    assert power_result.message == TEST_MODE_DISABLED_MESSAGE
+    assert shutdown_result.message == TEST_MODE_DISABLED_MESSAGE
+    assert renamer.names == []
+    assert launcher.program_ids == []
+    assert maintenance.calls == []
+
+
+def test_test_mode_blocks_special_system_settings_actions() -> None:
+    operator = RecordingSystemSettingsOperator()
+    use_case = SystemSettingsActions(operator, safety_guard=SafetyGuard(test_mode=True))
+
+    wallpaper = use_case.execute("set_default_wallpaper", "기본 배경화면 설정")
+    edge = use_case.execute("delete_edge_shortcut", "바탕화면 Edge 바로가기 삭제")
+    password = use_case.execute("disable_password_expiration", "사용자 계정 암호 만료 비활성화")
+
+    assert wallpaper.message == TEST_MODE_DISABLED_MESSAGE
+    assert edge.message == TEST_MODE_DISABLED_MESSAGE
+    assert password.message == TEST_MODE_DISABLED_MESSAGE
+    assert operator.calls == []
