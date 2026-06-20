@@ -20,7 +20,7 @@ from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, secondary_button, subtle_button
 from skhu_pc_management.presentation.qt.widgets.forms import FieldRow
-from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SummaryCard
+from skhu_pc_management.presentation.qt.widgets.surfaces import Card
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths, table_item
 
 
@@ -50,9 +50,6 @@ class NetworkPanel(QWidget):
         self.validation_label.setObjectName("mutedText")
         self.status_label = QLabel(view_model.status_message)
         self.status_label.setObjectName("mutedText")
-        self.adapter_summary = SummaryCard("현재 어댑터", "알 수 없음")
-        self.mode_summary = SummaryCard("IP 할당 방식", "확인 불가")
-        self.ip_summary = SummaryCard("IP 주소", "알 수 없음")
 
         self.current_table = QTableWidget(0, 2)
         self.current_table.setHorizontalHeaderLabels(["항목", "값"])
@@ -72,7 +69,6 @@ class NetworkPanel(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
         content_layout.addLayout(self._page_header())
-        content_layout.addLayout(self._summary_row())
         content_layout.addLayout(self._body_layout())
         content_layout.addStretch()
         scroll.setWidget(content)
@@ -101,14 +97,6 @@ class NetworkPanel(QWidget):
         row.addLayout(title_column)
         row.addStretch()
         row.addWidget(self.refresh_button)
-        return row
-
-    def _summary_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(12)
-        row.addWidget(self.adapter_summary)
-        row.addWidget(self.mode_summary)
-        row.addWidget(self.ip_summary)
         return row
 
     def _body_layout(self) -> QHBoxLayout:
@@ -204,7 +192,6 @@ class NetworkPanel(QWidget):
         gateway = self._view_model.gateway_for_ip_address(value)
         if gateway is not None:
             self.gateway_input.setText(gateway)
-        self._render_summary()
         self._render_validation()
 
     def _adapter_changed(self, adapter_name: str) -> None:
@@ -263,7 +250,6 @@ class NetworkPanel(QWidget):
             self.current_table.setItem(row_index, 0, table_item(row[0]))
             self.current_table.setItem(row_index, 1, table_item(row[1]))
         self._resize_current_table_to_contents()
-        self._render_summary()
 
     def _render_validation(self) -> None:
         is_valid, message = self._view_model.validate_static_ip_fields(
@@ -279,13 +265,6 @@ class NetworkPanel(QWidget):
         self.validation_banner.setObjectName("infoBanner" if is_valid and not self._view_model.validation_message else "warningBanner")
         self.validation_banner.style().unpolish(self.validation_banner)
         self.validation_banner.style().polish(self.validation_banner)
-
-    def _render_summary(self) -> None:
-        adapter = self._view_model.selected_adapter
-        self.adapter_summary.set_value(adapter.name if adapter else "알 수 없음")
-        mode_text = self._view_model.ip_status_text or "확인 불가"
-        self.mode_summary.set_value(mode_text, tone=_network_mode_tone(mode_text))
-        self.ip_summary.set_value(self.ip_input.text() or "알 수 없음")
 
     def _render_status_message(self) -> None:
         self._set_status_message(self._view_model.status_message)
@@ -346,12 +325,6 @@ def _display_network_status_message(message: str) -> str:
     if any(fragment in text for fragment in suppressed_fragments):
         return ""
     return text
-
-
-def _network_mode_tone(mode_text: str) -> str:
-    if mode_text == "확인 불가":
-        return "warning"
-    return "neutral"
 
 
 def _current_table_height(row_count: int) -> int:

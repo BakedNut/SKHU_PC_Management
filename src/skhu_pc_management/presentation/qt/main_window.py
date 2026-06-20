@@ -49,6 +49,8 @@ class MainWindow(QMainWindow):
 
         self.windows_badge = StatusBadge("Windows: 알 수 없음", "info")
         self.pc_badge = StatusBadge("PC: 알 수 없음", "neutral")
+        self.windows_badge.setObjectName("headerBadge")
+        self.pc_badge.setObjectName("headerBadge")
         self.test_mode_badge = StatusBadge("테스트 모드", "warning")
         self.test_mode_badge.setVisible(test_mode)
 

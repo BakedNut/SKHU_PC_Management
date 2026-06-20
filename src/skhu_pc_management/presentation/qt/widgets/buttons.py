@@ -28,6 +28,10 @@ def primary_button(text: str) -> QPushButton:
     return _button(text, "primary")
 
 
+def info_button(text: str) -> QPushButton:
+    return _button(text, "info")
+
+
 def secondary_button(text: str) -> QPushButton:
     return _button(text, "secondary")
 

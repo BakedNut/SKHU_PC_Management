@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QTab
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
-from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, warning_button
+from skhu_pc_management.presentation.qt.widgets.buttons import info_button, primary_button, warning_button
 from skhu_pc_management.presentation.qt.widgets.forms import FieldRow, FormGrid, ReadOnlyField, StatusValueField, read_only_field
 from skhu_pc_management.presentation.qt.widgets.surfaces import SummaryCard
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths
@@ -68,6 +68,7 @@ def test_status_value_field_updates_text_tooltip_and_tone(qt_app: QApplication) 
 
 def test_button_roles_are_set_for_qss(qt_app: QApplication) -> None:
     assert primary_button("실행").property("buttonRole") == "primary"
+    assert info_button("조회").property("buttonRole") == "info"
     assert warning_button("주의").property("buttonRole") == "warning"
 
 
@@ -126,6 +127,23 @@ def test_app_qss_contains_modern_scrollbar_and_combobox_styles() -> None:
     assert "QComboBox#comboInShell::down-arrow" in APP_QSS
 
 
+def test_app_qss_contains_header_badge_pill_styles() -> None:
+    assert "QLabel#headerBadge" in APP_QSS
+    assert 'QLabel#headerBadge[tone="info"]' in APP_QSS
+    assert 'QLabel#headerBadge[tone="neutral"]' in APP_QSS
+    assert "border-radius: 10px;" in APP_QSS
+    assert "padding: 8px 14px;" in APP_QSS
+
+
+def test_app_qss_contains_info_button_role() -> None:
+    assert 'QPushButton[buttonRole="info"]' in APP_QSS
+    assert 'QPushButton[buttonRole="info"]:hover' in APP_QSS
+    assert 'QPushButton[buttonRole="info"]:pressed' in APP_QSS
+    assert "background: #EFF6FF;" in APP_QSS
+    assert "border: 1px solid #93C5FD;" in APP_QSS
+    assert "color: #1D4ED8;" in APP_QSS
+
+
 def test_combo_with_arrow_wraps_combobox_with_visible_indicator(qt_app: QApplication) -> None:
     combo = QComboBox()
 
@@ -158,13 +176,26 @@ def test_network_panel_hides_successful_adapter_load_message_and_removes_duplica
 
     panel._load_adapters()
 
-    assert panel.mode_summary.title_label.text() == "IP 할당 방식"
+    assert not hasattr(panel, "adapter_summary")
+    assert not hasattr(panel, "mode_summary")
+    assert not hasattr(panel, "ip_summary")
+    assert panel.adapter_combo is not None
+    assert panel.ip_input is not None
+    assert panel.apply_button is not None
+    assert panel.dhcp_button is not None
     assert panel.status_label.isHidden() is True
     label_texts = [label.text() for label in panel.findChildren(QLabel)]
     assert "할당 방식" not in label_texts
     assert label_texts.count("IP 할당 방식") == 1
     assert panel.current_table.minimumHeight() == 238
     assert panel.current_table.maximumHeight() == 238
+    table_rows = [
+        (panel.current_table.item(row, 0).text(), panel.current_table.item(row, 1).text())
+        for row in range(panel.current_table.rowCount())
+    ]
+    assert ("네트워크 어댑터", "이더넷") in table_rows
+    assert ("IP 할당 방식", "수동 IP") in table_rows
+    assert ("IP 주소", "192.168.0.10") in table_rows
 
 
 def test_classroom_summary_formatter_shortens_status_text() -> None:
@@ -277,6 +308,32 @@ def test_action_center_quick_tool_button_order(qt_app: QApplication) -> None:
         "팟플레이어 실행",
         "반디집 실행",
     ]
+
+
+def test_action_center_quick_tool_button_roles(qt_app: QApplication) -> None:
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation())
+
+    buttons = {button.text(): button for button in panel.findChildren(QPushButton)}
+
+    assert buttons["Chrome 사용자 데이터 초기화"].property("buttonRole") == "danger"
+    assert buttons["Edge 사용자 데이터 초기화"].property("buttonRole") == "danger"
+    for label in (
+        "휴지통 비우기",
+        "Chrome 실행",
+        "Edge 실행",
+        "팟플레이어 실행",
+        "반디집 실행",
+        "전원 옵션 '안 함' 적용",
+        "23시 자동종료 적용",
+    ):
+        assert buttons[label].property("buttonRole") == "info"
+
+    for label in (
+        "선택한 설정 적용",
+        "복사 및 인증 창 열기",
+        "복사 및 Excel 실행",
+    ):
+        assert buttons[label].property("buttonRole") == "primary"
 
 
 def test_action_center_office_status_uses_detected_prefix_and_keeps_buttons_enabled(qt_app: QApplication) -> None:

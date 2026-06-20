@@ -26,10 +26,10 @@ from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcC
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge
 from skhu_pc_management.presentation.qt.widgets.buttons import (
+    info_button,
     primary_button,
     set_button_role,
     subtle_button,
-    warning_button,
 )
 from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SectionCard, SummaryCard
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths, status_item, table_item
@@ -290,13 +290,13 @@ class ActionCenterPanel(QWidget):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
         actions = (
-            ("휴지통 비우기", "정리 작업", lambda: self._run_maintenance("empty_recycle_bin"), "warning"),
+            ("휴지통 비우기", "정리 작업", lambda: self._run_maintenance("empty_recycle_bin"), "info"),
             ("Chrome 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_chrome_history"), "danger"),
             ("Edge 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_edge_history"), "danger"),
-            ("Chrome 실행", "브라우저 실행", lambda: self._launch_program("chrome"), "secondary"),
-            ("Edge 실행", "브라우저 실행", lambda: self._launch_program("edge"), "secondary"),
-            ("팟플레이어 실행", "동영상 플레이어", lambda: self._launch_program("potplayer"), "secondary"),
-            ("반디집 실행", "압축 프로그램", lambda: self._launch_program("bandizip"), "secondary"),
+            ("Chrome 실행", "브라우저 실행", lambda: self._launch_program("chrome"), "info"),
+            ("Edge 실행", "브라우저 실행", lambda: self._launch_program("edge"), "info"),
+            ("팟플레이어 실행", "동영상 플레이어", lambda: self._launch_program("potplayer"), "info"),
+            ("반디집 실행", "압축 프로그램", lambda: self._launch_program("bandizip"), "info"),
         )
         for index, (label, description, callback, role) in enumerate(actions):
             button = QPushButton(label)
@@ -336,8 +336,8 @@ class ActionCenterPanel(QWidget):
         card = Card("강의실 PC 전용 작업")
         self.power_status_label = StatusBadge("미확인", "neutral")
         self.shutdown_status_label = StatusBadge("미확인", "neutral")
-        self.power_apply_button = warning_button("전원 옵션 '안 함' 적용")
-        self.shutdown_apply_button = warning_button("23시 자동종료 적용")
+        self.power_apply_button = info_button("전원 옵션 '안 함' 적용")
+        self.shutdown_apply_button = info_button("23시 자동종료 적용")
         self.power_apply_button.setFixedWidth(210)
         self.shutdown_apply_button.setFixedWidth(210)
         self.power_description_label = QLabel("화면 끄기 / 절전 / 최대 절전: 확인 필요")

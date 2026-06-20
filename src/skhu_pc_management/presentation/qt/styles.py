@@ -204,6 +204,25 @@ QLabel#statusBadge[tone="danger"] {
     color: #DC2626;
     border: 1px solid #FECACA;
 }
+QLabel#headerBadge {
+    border-radius: 10px;
+    padding: 8px 14px;
+    min-height: 28px;
+    font-weight: 700;
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    color: #334155;
+}
+QLabel#headerBadge[tone="info"] {
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    color: #1D4ED8;
+}
+QLabel#headerBadge[tone="neutral"] {
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    color: #334155;
+}
 QPushButton {
     min-height: 34px;
     border-radius: 8px;
@@ -218,6 +237,19 @@ QPushButton[buttonRole="primary"] {
 QPushButton[buttonRole="primary"]:hover {
     background: #1D4ED8;
     border-color: #1D4ED8;
+}
+QPushButton[buttonRole="info"] {
+    background: #EFF6FF;
+    border: 1px solid #93C5FD;
+    color: #1D4ED8;
+}
+QPushButton[buttonRole="info"]:hover {
+    background: #DBEAFE;
+    border-color: #60A5FA;
+}
+QPushButton[buttonRole="info"]:pressed {
+    background: #BFDBFE;
+    border-color: #3B82F6;
 }
 QPushButton[buttonRole="secondary"] {
     background: #FFFFFF;
