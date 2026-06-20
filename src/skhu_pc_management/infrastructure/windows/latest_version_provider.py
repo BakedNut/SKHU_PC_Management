@@ -71,5 +71,27 @@ def parse_latest_potplayer_version(payload: str) -> str | None:
 
 
 def parse_latest_bandizip_version(payload: str) -> str | None:
-    match = re.search(r"[vV](\d+(?:\.\d+)+)", payload)
-    return match.group(1) if match else None
+    lower_payload = payload.lower()
+    history_index = lower_payload.find("bandizip version history")
+    search_area = payload[history_index:] if history_index >= 0 else payload
+
+    for marker in ("modifications", "version"):
+        marker_index = search_area.lower().find(marker)
+        if marker_index >= 0:
+            search_area = search_area[marker_index:]
+            break
+
+    patterns = (
+        r"(?im)^\s*v(\d+\.\d+(?:\.\d+)*)\s*$",
+        r"(?i)<[^>]*>\s*v(\d+\.\d+(?:\.\d+)*)\s*</[^>]+>",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, search_area)
+        if match:
+            return _major_minor_version(match.group(1))
+    return None
+
+
+def _major_minor_version(version: str) -> str:
+    match = re.match(r"(\d+\.\d+)", version.strip())
+    return match.group(1) if match else version.strip()

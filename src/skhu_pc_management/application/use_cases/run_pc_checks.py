@@ -113,14 +113,14 @@ class ProgramVersionCheck:
                 raw_value=program,
             )
 
-        comparison = compare_versions(current_version, latest_version)
+        comparison = _compare_program_versions(self.program_id, current_version, latest_version)
         if comparison is None:
             return CheckResult(
                 check_id=self.check_id,
                 label=self.label,
                 category=CheckCategory.PROGRAM,
                 status=CheckStatus.UNKNOWN,
-                message=f"{self.display_name} 버전 정보를 해석할 수 없습니다. 현재: {current_version} / 최신: {latest_version}",
+                message=f"{self.display_name} 버전 정보를 비교할 수 없습니다. 현재: {current_version} / 최신: {latest_version}",
                 detail=f"현재: {current_version} / 최신: {latest_version}",
                 raw_value=program,
             )
@@ -390,6 +390,16 @@ def compare_versions(current: str, latest: str) -> int | None:
     return 1 if current_parts > latest_parts else -1
 
 
+def _compare_program_versions(program_id: str, current: str, latest: str) -> int | None:
+    if program_id == "potplayer" and (_is_date_version(current) != _is_date_version(latest)):
+        return None
+    return compare_versions(current, latest)
+
+
+def _is_date_version(version: str) -> bool:
+    return re.fullmatch(r"\d{6}", version.strip()) is not None
+
+
 def _parse_version_parts(version: str | None) -> tuple[int, ...] | None:
     if not version:
         return None
@@ -409,8 +419,10 @@ def _normalize_local_version(program_id: str, version: str | None) -> str | None
         digits = "".join(re.findall(r"\d+", text))
         if not digits or digits in {"0", "000000", "00000000", "000000000"}:
             return None
-        match = re.search(r"\d{6}", digits)
-        return match.group(0) if match else None
+        date_match = re.fullmatch(r"\d{6}", text) or re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+        if date_match:
+            return date_match.group(0) if date_match.lastindex is None else date_match.group(1)
+        return text
     if program_id == "bandizip":
         if text in {"0.0", "0.0.0.0"}:
             return None

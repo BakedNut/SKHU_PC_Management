@@ -14,6 +14,7 @@ from skhu_pc_management.application.use_cases.run_pc_checks import (
     RunPcChecks,
     _classify_office_version,
     _display_office_name,
+    _normalize_local_version,
     compare_versions,
 )
 from skhu_pc_management.domain.checks.models import (
@@ -31,6 +32,8 @@ from skhu_pc_management.infrastructure.windows import installed_program_reader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import WindowsInstalledProgramReader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import (
     _extract_bandizip_version,
+    _extract_potplayer_date_version,
+    _get_potplayer_registry_version,
     _is_office_display_name,
     _parse_potplayer_history_version,
 )
@@ -278,16 +281,100 @@ def test_program_version_check_compares_potplayer_date_versions() -> None:
     assert result.message == "PotPlayer이 최신 버전입니다. 현재: 250101 / 최신: 250100"
 
 
+def test_program_version_check_reports_potplayer_uncomparable_versions_with_detail() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["potplayer"] = InstalledProgramInfo("potplayer", "PotPlayer", "1.7.22260.0")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["potplayer"] = "250617"
+
+    result = ProgramVersionCheck(
+        program_reader,
+        latest_provider,
+        "potplayer_install",
+        "PotPlayer 설치/버전 확인",
+        "potplayer",
+        "PotPlayer",
+    ).run()
+
+    assert result.status == CheckStatus.UNKNOWN
+    assert result.message == "PotPlayer 버전 정보를 비교할 수 없습니다. 현재: 1.7.22260.0 / 최신: 250617"
+    assert result.detail == "현재: 1.7.22260.0 / 최신: 250617"
+
+
 def test_latest_version_provider_parsers_do_not_require_network() -> None:
     assert parse_latest_chrome_version('[{"version":"126.0.1"}]') == "126.0.1"
     assert parse_latest_edge_version('[{"Product":"Stable","Releases":[{"ProductVersion":"126.0.2"}]}]') == "126.0.2"
     assert parse_latest_potplayer_version("release [250101]") == "250101"
-    assert parse_latest_bandizip_version("<a>v7.36</a>") == "7.36"
+    assert parse_latest_bandizip_version("<h1>Bandizip Version History</h1><td>v7.36</td>") == "7.36"
 
 
 def test_local_version_parsers_for_potplayer_and_bandizip() -> None:
     assert _parse_potplayer_history_version("변경 사항 [250101]") == "250101"
+    assert _extract_potplayer_date_version("build [250617]") == "250617"
+    assert _extract_potplayer_date_version("1.7.22260.0") is None
+    assert _normalize_local_version("potplayer", "250617") == "250617"
+    assert _normalize_local_version("potplayer", "1.7.22260.0") == "1.7.22260.0"
     assert _extract_bandizip_version("7.36.0.1") == "7.36"
+    assert _extract_bandizip_version("7.44") == "7.44"
+
+
+def test_latest_bandizip_parser_ignores_asset_versions_before_history() -> None:
+    payload = """
+    <script src="/assets/app-v12.4.js"></script>
+    <h1>Bandizip Version History</h1>
+    <table><tr><td>v7.44</td><td>June 9, 2026</td></tr></table>
+    """
+
+    assert parse_latest_bandizip_version(payload) == "7.44"
+
+
+def test_latest_bandizip_parser_reads_plain_text_history() -> None:
+    payload = """
+    Bandizip Version History
+
+    Version
+
+    Date
+
+    Modifications
+
+    v7.44
+
+    June 9, 2026
+    """
+
+    assert parse_latest_bandizip_version(payload) == "7.44"
+
+
+def test_latest_bandizip_parser_reads_html_history_cell() -> None:
+    payload = '<h1>Bandizip Version History</h1><table><tr><td>v7.44</td></tr></table>'
+
+    assert parse_latest_bandizip_version(payload) == "7.44"
+
+
+def test_latest_bandizip_parser_returns_none_without_history_entry() -> None:
+    payload = '<script src="/assets/app-v12.4.js"></script><h1>Bandizip Version History</h1><p>No entries</p>'
+
+    assert parse_latest_bandizip_version(payload) is None
+
+
+def test_bandizip_version_check_reports_latest_when_versions_match() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["bandizip"] = InstalledProgramInfo("bandizip", "Bandizip", "7.44")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["bandizip"] = "7.44"
+
+    result = ProgramVersionCheck(
+        program_reader,
+        latest_provider,
+        "bandizip_install",
+        "Bandizip 설치/버전 확인",
+        "bandizip",
+        "Bandizip",
+    ).run()
+
+    assert result.status == CheckStatus.OK
+    assert result.message == "Bandizip이 최신 버전입니다. 현재: 7.44 / 최신: 7.44"
 
 
 def test_office_check_reports_recommended_version_ok() -> None:
@@ -590,6 +677,78 @@ def test_installed_program_reader_uses_registry_path_for_potplayer(tmp_path: Pat
 
     assert program is not None
     assert program.path == str(exe)
+
+
+def test_installed_program_reader_uses_potplayer_registry_version(tmp_path: Path) -> None:
+    exe = tmp_path / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "250617"
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.version == "250617"
+
+
+def test_installed_program_reader_uses_potplayer_uninstall_version_fallback(tmp_path: Path) -> None:
+    exe = tmp_path / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    uninstall_root = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    registry.subkeys[("HKEY_LOCAL_MACHINE", uninstall_root)] = ["potplayer"]
+    registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\potplayer", "DisplayName")] = "PotPlayer-64 bit"
+    registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\potplayer", "DisplayVersion")] = "1.7.22260.0"
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.version == "1.7.22260.0"
+
+
+def test_potplayer_registry_version_helper_prefers_direct_version() -> None:
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "250617"
+
+    assert _get_potplayer_registry_version(registry) == "250617"
+
+
+def test_installed_program_reader_uses_potplayer_history_before_registry(tmp_path: Path) -> None:
+    exe = tmp_path / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    history_dir = tmp_path / "History"
+    history_dir.mkdir()
+    (history_dir / "Korean.txt").write_text("changes [250700]", encoding="ascii")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "250617"
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.version == "250700"
+
+
+def test_installed_program_reader_uses_file_version_text_when_potplayer_date_is_missing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exe = tmp_path / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    monkeypatch.setattr(installed_program_reader, "_get_file_version", lambda path: "1.7.22260.0")
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.version == "1.7.22260.0"
 
 
 def test_installed_program_reader_treats_missing_program_registry_keys_as_not_installed(monkeypatch) -> None:
