@@ -296,10 +296,12 @@ def test_pc_check_viewmodel_uses_office_detail_for_detected_summary() -> None:
     view_model = PcCheckViewModel(FakeRunOfficeChecks("Office 2024"))
     view_model.run_checks()
     assert view_model.installed_office_status_text == "현재 감지: Office 2024"
+    assert view_model.result_rows == []
 
     view_model = PcCheckViewModel(FakeRunOfficeChecks("Office 365"))
     view_model.run_checks()
     assert view_model.installed_office_status_text == "현재 감지: Office 365"
+    assert view_model.result_rows == []
 
 
 def test_pc_check_viewmodel_uses_none_for_missing_office_summary() -> None:
@@ -319,6 +321,36 @@ def test_pc_check_viewmodel_uses_none_for_missing_office_summary() -> None:
     view_model.run_checks()
 
     assert view_model.installed_office_status_text == "현재 감지: 없음"
+    assert view_model.result_rows == []
+
+
+def test_pc_check_viewmodel_hides_office_install_from_result_rows_but_keeps_other_checks() -> None:
+    class FakeRunMixedChecks:
+        def execute(self) -> list[CheckResult]:
+            return [
+                CheckResult(
+                    check_id="office_install",
+                    label="Office 설치 확인",
+                    status=CheckStatus.OK,
+                    message="Office 365가 설치되어 있습니다.",
+                    detail="Office 365",
+                ),
+                CheckResult(
+                    check_id="potplayer_install",
+                    label="PotPlayer 설치/버전 확인",
+                    status=CheckStatus.OK,
+                    message="PotPlayer이 최신 버전입니다. 현재: 260401 / 최신: 260401",
+                ),
+            ]
+
+    view_model = PcCheckViewModel(FakeRunMixedChecks())
+
+    view_model.run_checks()
+
+    assert view_model.installed_office_status_text == "현재 감지: Office 365"
+    assert view_model.result_rows == [
+        ("PotPlayer 설치/버전 확인", "정상", "PotPlayer이 최신 버전입니다. 현재: 260401 / 최신: 260401")
+    ]
 
 
 def test_activation_viewmodel_does_not_expose_product_key() -> None:

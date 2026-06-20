@@ -46,10 +46,7 @@ class PcCheckViewModel:
         self.status_message = "PC 점검 실행 중입니다..."
         try:
             results = self.run_pc_checks_use_case.execute()
-            self.result_rows = [
-                (result.label or result.name, _display_status(result.status), _display_message(result.message))
-                for result in results
-            ]
+            self.result_rows = _build_result_rows(results)
             self._update_summary_statuses(results)
             self.status_message = f"PC 점검 완료: {len(results)}개 항목"
         except Exception as exc:
@@ -111,3 +108,11 @@ def _display_status(status: object) -> str:
 
 def _display_message(message: str) -> str:
     return _MESSAGE_LABELS.get(message, message)
+
+
+def _build_result_rows(results: list[Any]) -> list[tuple[str, str, str]]:
+    return [
+        (result.label or result.name, _display_status(result.status), _display_message(result.message))
+        for result in results
+        if result.check_id != "office_install"
+    ]

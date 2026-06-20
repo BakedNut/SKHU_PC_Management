@@ -416,13 +416,7 @@ def _normalize_local_version(program_id: str, version: str | None) -> str | None
     if not text:
         return None
     if program_id == "potplayer":
-        digits = "".join(re.findall(r"\d+", text))
-        if not digits or digits in {"0", "000000", "00000000", "000000000"}:
-            return None
-        date_match = re.fullmatch(r"\d{6}", text) or re.search(r"(?<!\d)(\d{6})(?!\d)", text)
-        if date_match:
-            return date_match.group(0) if date_match.lastindex is None else date_match.group(1)
-        return text
+        return _extract_potplayer_date_version_for_check(text)
     if program_id == "bandizip":
         if text in {"0.0", "0.0.0.0"}:
             return None
@@ -431,6 +425,43 @@ def _normalize_local_version(program_id: str, version: str | None) -> str | None
     if text in {"0.0", "0.0.0.0"} or "0, 0, 0, 0" in text:
         return None
     return text
+
+
+def _extract_potplayer_date_version_for_check(version: str | None) -> str | None:
+    if _is_invalid_potplayer_version(version):
+        return None
+
+    text = version.strip()
+    match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+    if match and _is_valid_potplayer_date_version(match.group(1)):
+        return match.group(1)
+
+    compact = re.sub(r"[.,\s]", "", text)
+    for match in re.finditer(r"(?=(\d{6}))", compact):
+        candidate = match.group(1)
+        if _is_valid_potplayer_date_version(candidate):
+            return candidate
+    return None
+
+
+def _is_invalid_potplayer_version(version: str | None) -> bool:
+    if not version:
+        return True
+    text = version.strip()
+    if not text:
+        return True
+    digits = re.sub(r"\D", "", text)
+    return not digits or all(digit == "0" for digit in digits)
+
+
+def _is_valid_potplayer_date_version(candidate: str) -> bool:
+    if re.fullmatch(r"\d{6}", candidate) is None:
+        return False
+    if all(digit == "0" for digit in candidate):
+        return False
+    month = int(candidate[2:4])
+    day = int(candidate[4:6])
+    return 1 <= month <= 12 and 1 <= day <= 31
 
 
 def _classify_office_version(office_name: str) -> str:

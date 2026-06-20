@@ -72,7 +72,7 @@ class WindowsInstalledProgramReader:
             if registry_version:
                 return registry_version
             file_version = _get_file_version(path)
-            return _extract_potplayer_date_version(file_version) or _clean_version_text(file_version)
+            return _extract_potplayer_date_version(file_version)
 
         if program_id == "bandizip":
             file_version = _get_file_version(path)
@@ -158,12 +158,40 @@ def _get_file_version(path: Path) -> str | None:
     try:
         import win32api
 
+        product_version = _get_file_string_info(win32api, path, "ProductVersion")
+        if product_version:
+            return product_version
+        file_version = _get_file_string_info(win32api, path, "FileVersion")
+        if file_version:
+            return file_version
+
         info = win32api.GetFileVersionInfo(str(path), "\\")
         ms = info["FileVersionMS"]
         ls = info["FileVersionLS"]
         return ".".join(str(part) for part in (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF))
     except Exception:
         return None
+
+
+def _get_file_string_info(win32api: object, path: Path, field_name: str) -> str | None:
+    try:
+        translations = win32api.GetFileVersionInfo(str(path), r"\VarFileInfo\Translation")
+    except Exception:
+        return None
+
+    for language, codepage in translations:
+        try:
+            value = win32api.GetFileVersionInfo(
+                str(path),
+                rf"\StringFileInfo\{language:04x}{codepage:04x}\{field_name}",
+            )
+        except Exception:
+            continue
+        if isinstance(value, str):
+            cleaned = _clean_version_text(value)
+            if cleaned:
+                return cleaned
+    return None
 
 
 def _get_potplayer_history_version(path: Path) -> str | None:
@@ -177,14 +205,46 @@ def _get_potplayer_history_version(path: Path) -> str | None:
 
 def _parse_potplayer_history_version(content: str) -> str | None:
     match = re.search(r"\[(\d{6})\]", content)
-    return match.group(1) if match else None
+    if not match:
+        return None
+    return match.group(1) if _is_valid_potplayer_date_version(match.group(1)) else None
 
 
 def _extract_potplayer_date_version(version: str | None) -> str | None:
-    if not version:
+    if _is_invalid_potplayer_version(version):
         return None
-    match = re.search(r"(?<!\d)(\d{6})(?!\d)", version)
-    return match.group(1) if match else None
+
+    text = version.strip()
+    match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+    if match and _is_valid_potplayer_date_version(match.group(1)):
+        return match.group(1)
+
+    compact = re.sub(r"[.,\s]", "", text)
+    for match in re.finditer(r"(?=(\d{6}))", compact):
+        candidate = match.group(1)
+        if _is_valid_potplayer_date_version(candidate):
+            return candidate
+    return None
+
+
+def _is_invalid_potplayer_version(version: str | None) -> bool:
+    if not version:
+        return True
+    text = version.strip()
+    if not text:
+        return True
+    digits = re.sub(r"\D", "", text)
+    return not digits or all(digit == "0" for digit in digits)
+
+
+def _is_valid_potplayer_date_version(candidate: str) -> bool:
+    if re.fullmatch(r"\d{6}", candidate) is None:
+        return False
+    if all(digit == "0" for digit in candidate):
+        return False
+    month = int(candidate[2:4])
+    day = int(candidate[4:6])
+    return 1 <= month <= 12 and 1 <= day <= 31
 
 
 def _extract_bandizip_version(version: str | None) -> str | None:
@@ -198,8 +258,9 @@ def _get_potplayer_registry_version(registry: Registry) -> str | None:
     for key_path in (r"SOFTWARE\DAUM\PotPlayer64", r"SOFTWARE\DAUM\PotPlayer"):
         for value_name in ("Version", "DisplayVersion"):
             value = _read_registry_string(registry, "HKEY_LOCAL_MACHINE", key_path, value_name)
-            if value:
-                return value
+            version = _extract_potplayer_date_version(value)
+            if version:
+                return version
 
     uninstall_roots = (
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -215,8 +276,9 @@ def _get_potplayer_registry_version(registry: Registry) -> str | None:
             display_name = _read_registry_string(registry, "HKEY_LOCAL_MACHINE", key_path, "DisplayName")
             if display_name and "potplayer" in display_name.lower():
                 display_version = _read_registry_string(registry, "HKEY_LOCAL_MACHINE", key_path, "DisplayVersion")
-                if display_version:
-                    return display_version
+                version = _extract_potplayer_date_version(display_version)
+                if version:
+                    return version
     return None
 
 

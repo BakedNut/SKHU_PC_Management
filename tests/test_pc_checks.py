@@ -281,9 +281,9 @@ def test_program_version_check_compares_potplayer_date_versions() -> None:
     assert result.message == "PotPlayer이 최신 버전입니다. 현재: 250101 / 최신: 250100"
 
 
-def test_program_version_check_reports_potplayer_uncomparable_versions_with_detail() -> None:
+def test_program_version_check_rejects_potplayer_raw_file_version() -> None:
     program_reader = FakeInstalledProgramReader()
-    program_reader.programs["potplayer"] = InstalledProgramInfo("potplayer", "PotPlayer", "1.7.22260.0")
+    program_reader.programs["potplayer"] = InstalledProgramInfo("potplayer", "PotPlayer", "0.0.0.0")
     latest_provider = FakeLatestVersionProvider()
     latest_provider.versions["potplayer"] = "250617"
 
@@ -297,8 +297,66 @@ def test_program_version_check_reports_potplayer_uncomparable_versions_with_deta
     ).run()
 
     assert result.status == CheckStatus.UNKNOWN
-    assert result.message == "PotPlayer 버전 정보를 비교할 수 없습니다. 현재: 1.7.22260.0 / 최신: 250617"
-    assert result.detail == "현재: 1.7.22260.0 / 최신: 250617"
+    assert result.message == "로컬 버전을 확인할 수 없습니다."
+    assert result.detail is None
+    assert "0.0.0.0" not in result.message
+
+
+def test_program_version_check_rejects_potplayer_zero_date_version() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["potplayer"] = InstalledProgramInfo("potplayer", "PotPlayer", "000000")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["potplayer"] = "260401"
+
+    result = ProgramVersionCheck(
+        program_reader,
+        latest_provider,
+        "potplayer_install",
+        "PotPlayer 설치/버전 확인",
+        "potplayer",
+        "PotPlayer",
+    ).run()
+
+    assert result.status == CheckStatus.UNKNOWN
+    assert result.message == "로컬 버전을 확인할 수 없습니다."
+
+
+def test_program_version_check_reports_potplayer_latest_with_valid_date() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["potplayer"] = InstalledProgramInfo("potplayer", "PotPlayer", "260401")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["potplayer"] = "260401"
+
+    result = ProgramVersionCheck(
+        program_reader,
+        latest_provider,
+        "potplayer_install",
+        "PotPlayer 설치/버전 확인",
+        "potplayer",
+        "PotPlayer",
+    ).run()
+
+    assert result.status == CheckStatus.OK
+    assert result.message == "PotPlayer이 최신 버전입니다. 현재: 260401 / 최신: 260401"
+
+
+def test_program_version_check_reports_potplayer_update_needed_with_valid_date() -> None:
+    program_reader = FakeInstalledProgramReader()
+    program_reader.programs["potplayer"] = InstalledProgramInfo("potplayer", "PotPlayer", "260101")
+    latest_provider = FakeLatestVersionProvider()
+    latest_provider.versions["potplayer"] = "260401"
+
+    result = ProgramVersionCheck(
+        program_reader,
+        latest_provider,
+        "potplayer_install",
+        "PotPlayer 설치/버전 확인",
+        "potplayer",
+        "PotPlayer",
+    ).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "PotPlayer 업데이트가 필요합니다. 현재: 260101 / 최신: 260401"
 
 
 def test_latest_version_provider_parsers_do_not_require_network() -> None:
@@ -310,10 +368,24 @@ def test_latest_version_provider_parsers_do_not_require_network() -> None:
 
 def test_local_version_parsers_for_potplayer_and_bandizip() -> None:
     assert _parse_potplayer_history_version("변경 사항 [250101]") == "250101"
+    assert _extract_potplayer_date_version("260401") == "260401"
+    assert _extract_potplayer_date_version("[260401]") == "260401"
+    assert _extract_potplayer_date_version("26.04.01") == "260401"
+    assert _extract_potplayer_date_version("1.7.260401.0") == "260401"
     assert _extract_potplayer_date_version("build [250617]") == "250617"
     assert _extract_potplayer_date_version("1.7.22260.0") is None
+    assert _extract_potplayer_date_version("0.0.0.0") is None
+    assert _extract_potplayer_date_version("0, 0, 0, 0") is None
+    assert _extract_potplayer_date_version("000000") is None
+    assert _extract_potplayer_date_version("0000") is None
+    assert _extract_potplayer_date_version("0") is None
+    assert _extract_potplayer_date_version("722260") is None
     assert _normalize_local_version("potplayer", "250617") == "250617"
-    assert _normalize_local_version("potplayer", "1.7.22260.0") == "1.7.22260.0"
+    assert _normalize_local_version("potplayer", "1.7.22260.0") is None
+    assert _normalize_local_version("potplayer", "0.0.0.0") is None
+    assert _normalize_local_version("potplayer", "000000") is None
+    assert _normalize_local_version("potplayer", "26.04.01") == "260401"
+    assert _normalize_local_version("potplayer", "1.7.260401.0") == "260401"
     assert _extract_bandizip_version("7.36.0.1") == "7.36"
     assert _extract_bandizip_version("7.44") == "7.44"
 
@@ -684,13 +756,13 @@ def test_installed_program_reader_uses_potplayer_registry_version(tmp_path: Path
     exe.write_text("fake exe", encoding="utf-8")
     registry = FakeRegistry()
     registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
-    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "250617"
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "260401"
     reader = WindowsInstalledProgramReader(registry)
 
     program = reader.get_program("potplayer")
 
     assert program is not None
-    assert program.version == "250617"
+    assert program.version == "260401"
 
 
 def test_installed_program_reader_uses_potplayer_uninstall_version_fallback(tmp_path: Path) -> None:
@@ -701,20 +773,46 @@ def test_installed_program_reader_uses_potplayer_uninstall_version_fallback(tmp_
     uninstall_root = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
     registry.subkeys[("HKEY_LOCAL_MACHINE", uninstall_root)] = ["potplayer"]
     registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\potplayer", "DisplayName")] = "PotPlayer-64 bit"
-    registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\potplayer", "DisplayVersion")] = "1.7.22260.0"
+    registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\potplayer", "DisplayVersion")] = "260401"
     reader = WindowsInstalledProgramReader(registry)
 
     program = reader.get_program("potplayer")
 
     assert program is not None
-    assert program.version == "1.7.22260.0"
+    assert program.version == "260401"
+
+
+def test_installed_program_reader_ignores_invalid_potplayer_registry_version(tmp_path: Path) -> None:
+    exe = tmp_path / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "DisplayVersion")] = "0.0.0.0"
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.version is None
+
+
+def test_installed_program_reader_ignores_invalid_potplayer_uninstall_version(monkeypatch) -> None:
+    monkeypatch.setitem(installed_program_reader._PROGRAM_PATHS, "potplayer", ())
+    registry = FakeRegistry()
+    uninstall_root = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    registry.subkeys[("HKEY_LOCAL_MACHINE", uninstall_root)] = ["potplayer"]
+    registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\potplayer", "DisplayName")] = "PotPlayer-64 bit"
+    registry.values[("HKEY_LOCAL_MACHINE", rf"{uninstall_root}\potplayer", "DisplayVersion")] = "1.7.22260.0"
+    reader = WindowsInstalledProgramReader(registry)
+
+    assert reader.get_program("potplayer") is None
 
 
 def test_potplayer_registry_version_helper_prefers_direct_version() -> None:
     registry = FakeRegistry()
-    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "250617"
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "260401"
 
-    assert _get_potplayer_registry_version(registry) == "250617"
+    assert _get_potplayer_registry_version(registry) == "260401"
 
 
 def test_installed_program_reader_uses_potplayer_history_before_registry(tmp_path: Path) -> None:
@@ -722,7 +820,7 @@ def test_installed_program_reader_uses_potplayer_history_before_registry(tmp_pat
     exe.write_text("fake exe", encoding="utf-8")
     history_dir = tmp_path / "History"
     history_dir.mkdir()
-    (history_dir / "Korean.txt").write_text("changes [250700]", encoding="ascii")
+    (history_dir / "Korean.txt").write_text("changes [250701]", encoding="ascii")
     registry = FakeRegistry()
     registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
     registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "250617"
@@ -731,10 +829,10 @@ def test_installed_program_reader_uses_potplayer_history_before_registry(tmp_pat
     program = reader.get_program("potplayer")
 
     assert program is not None
-    assert program.version == "250700"
+    assert program.version == "250701"
 
 
-def test_installed_program_reader_uses_file_version_text_when_potplayer_date_is_missing(
+def test_installed_program_reader_does_not_use_file_version_text_when_potplayer_date_is_missing(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -748,7 +846,24 @@ def test_installed_program_reader_uses_file_version_text_when_potplayer_date_is_
     program = reader.get_program("potplayer")
 
     assert program is not None
-    assert program.version == "1.7.22260.0"
+    assert program.version is None
+
+
+def test_installed_program_reader_extracts_potplayer_date_from_embedded_file_version(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exe = tmp_path / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    monkeypatch.setattr(installed_program_reader, "_get_file_version", lambda path: "1.7.260401.0")
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.version == "260401"
 
 
 def test_installed_program_reader_treats_missing_program_registry_keys_as_not_installed(monkeypatch) -> None:
