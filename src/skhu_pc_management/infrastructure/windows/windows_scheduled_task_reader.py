@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import base64
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,14 +15,31 @@ class WindowsScheduledTaskReader:
     command_runner: CommandRunner
 
     def get_task(self, name: str) -> ScheduledTaskInfo:
+        escaped_name = _escape_powershell_single_quoted(name)
+        script = f"""
+$ErrorActionPreference = 'Stop'
+Import-Module ScheduledTasks -ErrorAction Stop
+$taskName = '{escaped_name}'
+$task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+$action = $task.Actions | Select-Object -First 1
+$trigger = $task.Triggers | Select-Object -First 1
+[PSCustomObject]@{{
+    TaskName = $task.TaskName
+    State = [string]$task.State
+    Execute = [string]$action.Execute
+    Arguments = [string]$action.Arguments
+    StartBoundary = [string]$trigger.StartBoundary
+    Description = [string]$task.Description
+}} | ConvertTo-Json -Depth 4
+""".strip()
+        encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         command = (
             "powershell",
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
-            "-Command",
-            f"Get-ScheduledTask -TaskName '{_escape_powershell_single_quoted(name)}' "
-            "| Select-Object TaskName, State, Actions, Triggers | ConvertTo-Json -Depth 6",
+            "-EncodedCommand",
+            encoded_script,
         )
         try:
             output = self.command_runner.run(command)
@@ -47,18 +65,21 @@ def parse_scheduled_task_json(name: str, output: str) -> ScheduledTaskInfo:
         return ScheduledTaskInfo(name=name, exists=False, raw=parsed)
 
     task_name = _read_first_present(parsed, ("TaskName", "taskName")) or name
+    executable = _read_first_present(parsed, ("Execute", "execute"))
+    arguments = _read_first_present(parsed, ("Arguments", "arguments"))
+    start_boundary = _read_first_present(parsed, ("StartBoundary", "startBoundary"))
+
     actions = _as_list(_read_first_present(parsed, ("Actions", "actions")))
     triggers = _as_list(_read_first_present(parsed, ("Triggers", "triggers")))
     action = actions[0] if actions else {}
     trigger = triggers[0] if triggers else {}
 
-    executable = _read_first_present(action, ("Execute", "execute", "Path", "path")) if isinstance(action, dict) else None
-    arguments = _read_first_present(action, ("Arguments", "arguments")) if isinstance(action, dict) else None
-    start_boundary = (
-        _read_first_present(trigger, ("StartBoundary", "startBoundary"))
-        if isinstance(trigger, dict)
-        else None
-    )
+    if executable is None and isinstance(action, dict):
+        executable = _read_first_present(action, ("Execute", "execute", "Path", "path"))
+    if arguments is None and isinstance(action, dict):
+        arguments = _read_first_present(action, ("Arguments", "arguments"))
+    if start_boundary is None and isinstance(trigger, dict):
+        start_boundary = _read_first_present(trigger, ("StartBoundary", "startBoundary"))
 
     return ScheduledTaskInfo(
         name=str(task_name),
@@ -92,6 +113,8 @@ def _read_first_present(source: object, names: tuple[str, ...]) -> Any:
 
 
 def _parse_time(value: object) -> str | None:
+    if isinstance(value, list):
+        value = value[0] if value else None
     if value is None:
         return None
 

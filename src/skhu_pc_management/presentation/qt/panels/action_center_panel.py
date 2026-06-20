@@ -104,6 +104,7 @@ class ActionCenterPanel(QWidget):
         self._checkboxes: dict[str, QCheckBox] = {}
         self._win11_only_checkboxes: list[QCheckBox] = []
         self._danger_buttons: list[QPushButton] = []
+        self._launch_buttons: list[QPushButton] = []
 
         self.refresh_status_button = primary_button("상태 새로고침")
         self.settings_summary = SummaryCard("설정 상태", "상태 확인 필요")
@@ -300,12 +301,15 @@ class ActionCenterPanel(QWidget):
             ("Edge 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_edge_history"), "danger"),
         )
         for index, (label, description, callback, role) in enumerate(actions):
-            button = QPushButton(f"{label}\n{description}")
+            button = QPushButton(label)
             set_button_role(button, role)
+            button.setToolTip(description)
             button.clicked.connect(callback)
             if role == "danger":
                 button.setToolTip("User Data 전체 폴더를 삭제합니다. 로그인 세션, 확장 프로그램 설정 등이 삭제될 수 있습니다.")
                 self._danger_buttons.append(button)
+            elif label.endswith("실행"):
+                self._launch_buttons.append(button)
             grid.addWidget(button, index // 3, index % 3)
         card.body_layout.addLayout(grid)
         return card
@@ -427,8 +431,6 @@ class ActionCenterPanel(QWidget):
             apply_status = row[1] if len(row) > 1 else ""
             current_status = row[2] if len(row) > 2 else ""
             detail = row[3] if len(row) > 3 else ""
-            if apply_status not in ("", "-"):
-                detail = f"{apply_status} / {detail}" if detail else apply_status
             self.settings_table.setItem(row_index, 0, table_item(name))
             self.settings_table.setItem(row_index, 1, status_item(current_status))
             detail_item = table_item(detail)
@@ -616,6 +618,7 @@ class ActionCenterPanel(QWidget):
             self.power_apply_button,
             self.shutdown_apply_button,
             *self._danger_buttons,
+            *self._launch_buttons,
         ):
             button.setEnabled(False)
             button.setToolTip(TEST_MODE_DISABLED_MESSAGE)
@@ -680,7 +683,20 @@ def _short_shutdown_status(text: str) -> tuple[str, str]:
 
 
 def _short_policy_status(text: str, normal_tokens: tuple[str, ...]) -> str:
-    if _contains_any(text, ("확인 불가", "읽을 수 없음", "알 수 없음", "미확인")):
+    if _contains_any(
+        text,
+        (
+            "확인 불가",
+            "읽을 수 없음",
+            "알 수 없음",
+            "미확인",
+            "확인할 수 없습니다",
+            "확인할 수 없음",
+            "조회 실패",
+            "읽기 실패",
+            "상태를 확인할 수",
+        ),
+    ):
         return "확인 불가"
     if _contains_any(text, ("주의", "오류", "실패", "등록되어 있지", "올바르지", "필요", "활성화됨")):
         return "확인 필요"

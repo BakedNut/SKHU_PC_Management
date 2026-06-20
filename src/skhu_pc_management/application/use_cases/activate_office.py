@@ -11,6 +11,7 @@ from skhu_pc_management.ports.product_key_provider import ProductKeyProvider
 
 
 DEFAULT_EXCEL_PATH = Path("excel.exe")
+CLIPBOARD_AFTER_FAILURE_NOTICE = "제품키는 이미 클립보드에 복사되었을 수 있습니다. 사용 후 다른 값을 복사해 클립보드를 덮어쓰세요."
 
 
 @dataclass(frozen=True)
@@ -37,12 +38,23 @@ class ActivateOffice:
 
         try:
             self.clipboard.set_text(product_key)
+        except Exception as exc:
+            return ActivationResult(
+                success=False,
+                action="office_activation",
+                message=f"Office 인증 준비 실패: {exc}",
+                launched_process=str(self.excel_path),
+                copied_to_clipboard=False,
+                error=str(exc),
+            )
+
+        try:
             self.process_launcher.launch(self.excel_path)
         except FileNotFoundError as exc:
             return ActivationResult(
                 success=False,
                 action="office_activation",
-                message="Excel 실행 파일을 찾지 못했습니다.",
+                message=f"Excel 실행 파일을 찾지 못했습니다. {CLIPBOARD_AFTER_FAILURE_NOTICE}",
                 launched_process=str(self.excel_path),
                 copied_to_clipboard=True,
                 error=str(exc),
@@ -51,7 +63,7 @@ class ActivateOffice:
             return ActivationResult(
                 success=False,
                 action="office_activation",
-                message=f"Office 인증 준비 실패: {exc}",
+                message=f"Office 인증 준비 실패: {exc} {CLIPBOARD_AFTER_FAILURE_NOTICE}",
                 launched_process=str(self.excel_path),
                 copied_to_clipboard=True,
                 error=str(exc),

@@ -349,15 +349,23 @@ def _auto_shutdown_schedule_mismatch_reasons(
     if trigger_time != "22:55":
         reasons.append(f"시간={trigger_time or '없음'}")
 
-    executable_name = (executable or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if not executable or not executable.strip():
+        reasons.append("작업은 존재하지만 실행 명령을 읽을 수 없습니다.")
+        executable_name = ""
+    else:
+        executable_name = executable.replace("\\", "/").rsplit("/", 1)[-1].lower()
     if executable_name not in {"shutdown", "shutdown.exe"}:
-        reasons.append(f"명령={executable or '없음'}")
+        if executable_name:
+            reasons.append(f"명령={executable}")
 
-    argument_text = (arguments or "").lower()
-    if re.search(r"(^|\s)-s(\s|$)", argument_text) is None:
-        reasons.append("옵션=-s 없음")
-    if re.search(r"(^|\s)-t\s+300(\s|$)", argument_text) is None:
-        reasons.append("옵션=-t 300 없음")
+    if not arguments or not arguments.strip():
+        reasons.append("작업은 존재하지만 실행 옵션을 읽을 수 없습니다.")
+    else:
+        argument_text = arguments.lower()
+        if re.search(r"(^|\s)-s(\s|$)", argument_text) is None:
+            reasons.append("옵션=-s 없음")
+        if re.search(r"(^|\s)-t\s+300(\s|$)", argument_text) is None:
+            reasons.append("옵션=-t 300 없음")
 
     return reasons
 

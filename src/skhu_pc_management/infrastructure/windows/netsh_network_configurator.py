@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult, StaticIpConfig
@@ -37,7 +37,7 @@ class NetshNetworkConfigurator:
         )
         detailed_adapters = _parse_powershell_detailed_adapters(detailed_output)
         if detailed_adapters:
-            return detailed_adapters
+            return [self._fill_missing_dhcp_from_netsh(adapter) for adapter in detailed_adapters]
 
         output = self.command_runner.run(
             (
@@ -197,6 +197,15 @@ class NetshNetworkConfigurator:
             is_dhcp_enabled=details["is_dhcp_enabled"],
         )
 
+    def _fill_missing_dhcp_from_netsh(self, adapter: NetworkAdapterInfo) -> NetworkAdapterInfo:
+        if adapter.is_dhcp_enabled is not None:
+            return adapter
+        details = self._read_adapter_details(adapter.name)
+        dhcp_enabled = details.get("is_dhcp_enabled")
+        if not isinstance(dhcp_enabled, bool):
+            return adapter
+        return replace(adapter, is_dhcp_enabled=dhcp_enabled)
+
 
 def _parse_interface_names(output: str) -> list[tuple[str, bool]]:
     adapters: list[tuple[str, bool]] = []
@@ -310,7 +319,7 @@ def _parse_ip_config(output: str) -> dict[str, object]:
         lower = line.lower()
 
         if "dhcp enabled" in lower or "dhcp 사용" in lower:
-            is_dhcp_enabled = line.split(":", 1)[-1].strip().lower() in {"yes", "예", "true", "사용함"}
+            is_dhcp_enabled = _parse_boolish(line.split(":", 1)[-1].strip())
         elif "ip address" in lower or "ip 주소" in lower:
             value = _value_after_colon(line)
             ip_address = _first_ipv4(value or "")
@@ -378,10 +387,16 @@ def _first_int(value: object) -> int | None:
 def _parse_boolish(value: object) -> bool | None:
     if value is None:
         return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, (list, tuple)):
+        return _parse_boolish(value[0] if value else None)
     text = str(value).strip().lower()
-    if text in {"true", "enabled", "yes", "예", "사용", "사용함"}:
+    if text in {"true", "enabled", "yes", "on", "1", "예", "사용", "사용함"}:
         return True
-    if text in {"false", "disabled", "no", "아니요", "사용 안 함"}:
+    if text in {"false", "disabled", "no", "off", "0", "아니요", "사용 안 함", "사용안함"}:
         return False
     return None
 
@@ -453,7 +468,7 @@ $items = foreach ($adapter in $adapters) {
         IPv4PrefixLength = @($ipConfig.IPv4Address.PrefixLength)
         IPv4DefaultGateway = @($ipConfig.IPv4DefaultGateway.NextHop)
         DnsServers = @($dns.ServerAddresses)
-        Dhcp = $ipInterface.Dhcp
+        Dhcp = if ($null -eq $ipInterface) { $null } else { [string]$ipInterface.Dhcp }
     }
 }
 $items | ConvertTo-Json -Depth 5

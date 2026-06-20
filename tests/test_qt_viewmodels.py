@@ -172,6 +172,7 @@ def test_viewmodels_skip_work_when_busy() -> None:
 
 def test_network_viewmodel_calls_use_cases() -> None:
     view_model = NetworkViewModel(FakeListAdapters(), FakeApplyStaticIp(), FakeSetDhcp())
+    view_model.reload_sleep = lambda _: None
 
     view_model.load_adapters()
     assert view_model.adapters[0].name == "Ethernet"

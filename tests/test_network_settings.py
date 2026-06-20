@@ -11,6 +11,7 @@ from skhu_pc_management.domain.network.models import NetworkAdapterInfo, Network
 from skhu_pc_management.infrastructure.windows.netsh_network_configurator import NetshNetworkConfigurator
 from skhu_pc_management.infrastructure.windows.netsh_network_configurator import (
     _POWERSHELL_DETAILED_ADAPTER_SCRIPT,
+    _parse_boolish,
     _prefix_length_to_subnet_mask,
 )
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
@@ -439,6 +440,76 @@ def test_network_configurator_reads_detailed_powershell_json() -> None:
     assert adapters[0].is_dhcp_enabled is False
 
 
+def test_parse_boolish_handles_windows_and_common_tokens() -> None:
+    assert _parse_boolish(True) is True
+    assert _parse_boolish(False) is False
+    assert _parse_boolish(1) is True
+    assert _parse_boolish(0) is False
+    assert _parse_boolish("Enabled") is True
+    assert _parse_boolish("Disabled") is False
+    assert _parse_boolish("on") is True
+    assert _parse_boolish("off") is False
+    assert _parse_boolish("사용함") is True
+    assert _parse_boolish("사용 안 함") is False
+    assert _parse_boolish(["Enabled"]) is True
+
+
+def test_network_configurator_reads_enabled_dhcp_from_detailed_powershell_json() -> None:
+    output = """
+{
+  "Name": "Wi-Fi",
+  "InterfaceDescription": "RZ616 Wi-Fi 6E 160MHz",
+  "Status": "Disconnected",
+  "MacAddress": "00-11-22-33-44-55",
+  "IPv4Addresses": [],
+  "IPv4PrefixLength": [],
+  "IPv4DefaultGateway": [],
+  "DnsServers": [],
+  "Dhcp": "Enabled"
+}
+"""
+    command_runner = FakeCommandRunner({POWERSHELL_DETAILED_ADAPTER_COMMAND: output})
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert adapters[0].is_dhcp_enabled is True
+
+
+def test_network_configurator_fills_only_missing_dhcp_from_netsh_when_powershell_ip_exists() -> None:
+    detailed_output = """
+{
+  "Name": "이더넷",
+  "InterfaceDescription": "Realtek Gaming 2.5GbE Family Controller",
+  "Status": "Up",
+  "MacAddress": "00-11-22-33-44-55",
+  "IPv4Addresses": ["192.168.10.20"],
+  "IPv4PrefixLength": [24],
+  "IPv4DefaultGateway": ["192.168.10.1"],
+  "DnsServers": ["8.8.8.8"],
+  "Dhcp": null
+}
+"""
+    netsh_output = """
+Configuration for interface "이더넷"
+    DHCP enabled:                         Yes
+    IP Address:                           10.0.0.20
+    Default Gateway:                      10.0.0.1
+"""
+    command_runner = FakeCommandRunner(
+        {
+            POWERSHELL_DETAILED_ADAPTER_COMMAND: detailed_output,
+            ("netsh", "interface", "ip", "show", "config", "name=이더넷"): netsh_output,
+        }
+    )
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert adapters[0].ip_addresses == ("192.168.10.20",)
+    assert adapters[0].gateway == "192.168.10.1"
+    assert adapters[0].dns_servers == ("8.8.8.8",)
+    assert adapters[0].is_dhcp_enabled is True
+
+
 def test_prefix_length_to_subnet_mask() -> None:
     assert _prefix_length_to_subnet_mask(24) == "255.255.255.0"
     assert _prefix_length_to_subnet_mask(16) == "255.255.0.0"
@@ -455,7 +526,12 @@ def test_network_viewmodel_reloads_adapters_after_static_ip_success() -> None:
             return [NetworkAdapterInfo("Ethernet", "Ethernet", True, ip_addresses=(ip,), subnet_mask="255.255.255.0")]
 
     list_adapters = ReloadingListAdapters()
-    view_model = NetworkViewModel(list_adapters, ApplyStaticIp(FakeNetworkConfigurator()), SetDhcp(FakeNetworkConfigurator()))
+    view_model = NetworkViewModel(
+        list_adapters,
+        ApplyStaticIp(FakeNetworkConfigurator()),
+        SetDhcp(FakeNetworkConfigurator()),
+        reload_sleep=lambda _: None,
+    )
     view_model.load_adapters()
 
     view_model.apply_static_ip("Ethernet", "192.168.0.20", "255.255.255.0", "192.168.0.1", "", "")
@@ -475,13 +551,79 @@ def test_network_viewmodel_reloads_adapters_after_dhcp_success() -> None:
             return [NetworkAdapterInfo("Ethernet", "Ethernet", True, is_dhcp_enabled=self.calls > 1)]
 
     list_adapters = ReloadingListAdapters()
-    view_model = NetworkViewModel(list_adapters, ApplyStaticIp(FakeNetworkConfigurator()), SetDhcp(FakeNetworkConfigurator()))
+    view_model = NetworkViewModel(
+        list_adapters,
+        ApplyStaticIp(FakeNetworkConfigurator()),
+        SetDhcp(FakeNetworkConfigurator()),
+        reload_sleep=lambda _: None,
+    )
     view_model.load_adapters()
 
     view_model.set_dhcp("Ethernet")
 
     assert list_adapters.calls == 2
     assert view_model.ip_status_text == "자동 IP(DHCP)"
+
+
+def test_network_viewmodel_retries_adapter_reload_until_expected_static_ip_is_visible() -> None:
+    class SlowlyUpdatingListAdapters:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self) -> list[NetworkAdapterInfo]:
+            self.calls += 1
+            ip = "192.168.0.10" if self.calls <= 2 else "192.168.0.20"
+            return [NetworkAdapterInfo("Ethernet", "Ethernet", True, ip_addresses=(ip,), subnet_mask="255.255.255.0")]
+
+    list_adapters = SlowlyUpdatingListAdapters()
+    view_model = NetworkViewModel(
+        list_adapters,
+        ApplyStaticIp(FakeNetworkConfigurator()),
+        SetDhcp(FakeNetworkConfigurator()),
+        reload_sleep=lambda _: None,
+    )
+    view_model.load_adapters()
+
+    view_model.apply_static_ip("Ethernet", "192.168.0.20", "255.255.255.0", "192.168.0.1", "", "")
+
+    assert list_adapters.calls == 3
+    assert view_model.selected_adapter is not None
+    assert view_model.selected_adapter.ip_addresses == ("192.168.0.20",)
+
+
+def test_network_viewmodel_keeps_message_when_reload_fails() -> None:
+    class FailingReloadListAdapters:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self) -> list[NetworkAdapterInfo]:
+            self.calls += 1
+            if self.calls == 1:
+                return [NetworkAdapterInfo("Ethernet", "Ethernet", True, ip_addresses=("192.168.0.10",))]
+            raise RuntimeError("reload failed")
+
+    list_adapters = FailingReloadListAdapters()
+    view_model = NetworkViewModel(
+        list_adapters,
+        ApplyStaticIp(FakeNetworkConfigurator()),
+        SetDhcp(FakeNetworkConfigurator()),
+        reload_sleep=lambda _: None,
+    )
+    view_model.load_adapters()
+
+    view_model.apply_static_ip("Ethernet", "192.168.0.20", "255.255.255.0", "192.168.0.1", "", "")
+
+    assert "상태 재조회 실패: reload failed" in view_model.status_message
+
+
+def test_network_viewmodel_displays_unknown_dhcp_as_check_unavailable() -> None:
+    view_model = NetworkViewModel(FakeNetworkConfigurator(), FakeNetworkConfigurator(), FakeNetworkConfigurator())
+    view_model.adapters = [NetworkAdapterInfo("Ethernet", "Ethernet", True, is_dhcp_enabled=None)]
+
+    view_model.select_adapter_by_name("Ethernet")
+
+    assert view_model.ip_status_text == "확인 불가"
+    assert ("IP 할당 방식", "확인 불가") in view_model.current_network_info_rows
 
 
 def test_network_viewmodel_rejects_incomplete_ip_prefix_with_korean_message() -> None:

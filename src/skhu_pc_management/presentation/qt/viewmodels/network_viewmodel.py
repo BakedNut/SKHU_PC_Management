@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from ipaddress import ip_address
-from typing import Any
+from typing import Any, Callable
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, StaticIpConfig
 
@@ -15,10 +16,12 @@ class NetworkViewModel:
     adapters: list[NetworkAdapterInfo] = field(default_factory=list)
     selected_adapter: NetworkAdapterInfo | None = None
     current_network_info_rows: list[tuple[str, str]] = field(default_factory=list)
-    ip_status_text: str = "알 수 없음"
+    ip_status_text: str = "확인 불가"
     validation_message: str = ""
     status_message: str = "네트워크 어댑터를 불러오지 않았습니다."
     is_busy: bool = False
+    reload_sleep: Callable[[float], None] = time.sleep
+    reload_retry_delay_seconds: float = 0.5
 
     def default_static_ip_fields(self) -> dict[str, str]:
         return {
@@ -54,7 +57,7 @@ class NetworkViewModel:
             else:
                 self.selected_adapter = None
                 self.current_network_info_rows = []
-                self.ip_status_text = "알 수 없음"
+                self.ip_status_text = "확인 불가"
                 self.status_message = (
                     "어댑터를 찾지 못했습니다. PowerShell/Get-NetAdapter 또는 netsh 조회 결과를 확인하세요."
                 )
@@ -107,7 +110,7 @@ class NetworkViewModel:
             result = self.apply_static_ip_use_case.execute(config)
             self.status_message = result.message if result.success else f"정적 IP 적용 실패: {result.message}"
             if result.success:
-                self._reload_after_network_change(adapter_name)
+                self._reload_after_network_change(adapter_name, expected_ip=config.ip_address, expected_dhcp=False)
         except Exception as exc:
             self.validation_message = str(exc)
             self.status_message = f"입력 오류: {exc}"
@@ -117,7 +120,7 @@ class NetworkViewModel:
     def _update_current_network_info(self) -> None:
         adapter = self.selected_adapter
         if adapter is None:
-            self.ip_status_text = "알 수 없음"
+            self.ip_status_text = "확인 불가"
             self.current_network_info_rows = []
             return
 
@@ -144,7 +147,7 @@ class NetworkViewModel:
             result = self.set_dhcp_use_case.execute(adapter_name)
             self.status_message = result.message if result.success else f"DHCP 전환 실패: {result.message}"
             if result.success:
-                self._reload_after_network_change(adapter_name)
+                self._reload_after_network_change(adapter_name, expected_dhcp=True)
         except Exception as exc:
             self.status_message = f"DHCP 전환 실패: {exc}"
         finally:
@@ -174,12 +177,30 @@ class NetworkViewModel:
                     return False, message
         return True, ""
 
-    def _reload_after_network_change(self, adapter_name: str) -> None:
-        try:
-            self.adapters = self.list_network_adapters_use_case.execute()
-            self.select_adapter_by_name(adapter_name)
-        except Exception as exc:
-            self.status_message = f"{self.status_message} 상태 재조회 실패: {exc}"
+    def _reload_after_network_change(
+        self,
+        adapter_name: str,
+        *,
+        expected_ip: str | None = None,
+        expected_dhcp: bool | None = None,
+    ) -> None:
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                self.adapters = self.list_network_adapters_use_case.execute()
+                self.select_adapter_by_name(adapter_name)
+                if self.selected_adapter is not None and _adapter_matches_expected_state(
+                    self.selected_adapter,
+                    expected_ip=expected_ip,
+                    expected_dhcp=expected_dhcp,
+                ):
+                    return
+            except Exception as exc:
+                last_error = exc
+            if attempt < 2:
+                self.reload_sleep(self.reload_retry_delay_seconds)
+        if last_error is not None:
+            self.status_message = f"{self.status_message} 상태 재조회 실패: {last_error}"
 
 
 def _dhcp_text(value: bool | None) -> str:
@@ -187,7 +208,20 @@ def _dhcp_text(value: bool | None) -> str:
         return "자동 IP(DHCP)"
     if value is False:
         return "수동 IP"
-    return "알 수 없음"
+    return "확인 불가"
+
+
+def _adapter_matches_expected_state(
+    adapter: NetworkAdapterInfo,
+    *,
+    expected_ip: str | None,
+    expected_dhcp: bool | None,
+) -> bool:
+    if expected_ip is not None and expected_ip not in adapter.ip_addresses:
+        return False
+    if expected_dhcp is not None and adapter.is_dhcp_enabled is not None and adapter.is_dhcp_enabled != expected_dhcp:
+        return False
+    return True
 
 
 def _validate_ip_text(label: str, value: str) -> tuple[bool, str]:

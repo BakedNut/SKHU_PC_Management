@@ -123,7 +123,30 @@ def test_office_activation_reports_missing_excel_in_korean() -> None:
     result = ActivateOffice(provider, FakeClipboard(), FakeProcessLauncher(FileNotFoundError("missing"))).execute("2024")
 
     assert result.success is False
-    assert result.message == "Excel 실행 파일을 찾지 못했습니다."
+    assert "Excel 실행 파일을 찾지 못했습니다." in result.message
+    assert "제품키는 이미 클립보드에 복사되었을 수 있습니다." in result.message
+    assert "office-secret" not in result.message
+
+
+def test_windows_activation_warns_clipboard_may_contain_key_when_launch_fails() -> None:
+    provider = FakeProductKeyProvider(windows_key="windows-secret")
+
+    result = ActivateWindows(provider, FakeClipboard(), FakeProcessLauncher(RuntimeError("launch failed"))).execute("windows_11")
+
+    assert result.success is False
+    assert result.copied_to_clipboard is True
+    assert "제품키는 이미 클립보드에 복사되었을 수 있습니다." in result.message
+    assert "windows-secret" not in result.message
+
+
+def test_office_activation_warns_clipboard_may_contain_key_when_launch_fails() -> None:
+    provider = FakeProductKeyProvider(office_key="office-secret")
+
+    result = ActivateOffice(provider, FakeClipboard(), FakeProcessLauncher(RuntimeError("launch failed"))).execute("2024")
+
+    assert result.success is False
+    assert result.copied_to_clipboard is True
+    assert "제품키는 이미 클립보드에 복사되었을 수 있습니다." in result.message
     assert "office-secret" not in result.message
 
 

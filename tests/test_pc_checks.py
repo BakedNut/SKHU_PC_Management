@@ -411,6 +411,24 @@ def test_auto_shutdown_schedule_check_reports_warning_for_missing_shutdown_argum
     assert "옵션=-s 없음" in (result.detail or "")
 
 
+def test_auto_shutdown_schedule_check_reports_clear_detail_when_action_is_missing() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable=None, arguments="-s -t 300")
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task)).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert "작업은 존재하지만 실행 명령을 읽을 수 없습니다." in (result.detail or "")
+
+
+def test_auto_shutdown_schedule_check_reports_clear_detail_when_arguments_are_missing() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable="shutdown.exe", arguments=None)
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task)).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert "작업은 존재하지만 실행 옵션을 읽을 수 없습니다." in (result.detail or "")
+
+
 def test_auto_shutdown_schedule_check_reports_unknown_when_reader_fails() -> None:
     task = ScheduledTaskInfo("23시 자동 종료", exists=False, error="PowerShell failed")
 

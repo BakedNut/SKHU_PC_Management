@@ -15,6 +15,7 @@ from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, w
 from skhu_pc_management.presentation.qt.widgets.forms import FieldRow, FormGrid, ReadOnlyField, StatusValueField, read_only_field
 from skhu_pc_management.presentation.qt.widgets.surfaces import SummaryCard
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths
+from skhu_pc_management.presentation.qt.styles import APP_QSS
 from skhu_pc_management.presentation.qt.panels.action_center_panel import (
     ActionCenterPanel,
     _classroom_summary_value,
@@ -96,6 +97,14 @@ def test_summary_card_tone_property_updates(qt_app: QApplication) -> None:
     assert card.property("tone") == "danger"
 
 
+def test_app_qss_contains_modern_scrollbar_and_combobox_styles() -> None:
+    assert "QScrollBar::handle:vertical" in APP_QSS
+    assert "QScrollBar::handle:horizontal" in APP_QSS
+    assert "QComboBox::drop-down" in APP_QSS
+    assert "QComboBox::down-arrow" in APP_QSS
+    assert "QComboBox QAbstractItemView" in APP_QSS
+
+
 def test_classroom_summary_formatter_shortens_status_text() -> None:
     value, subtitle, tone = _classroom_summary_value(
         "전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함, 절전: 안 함, 최대 절전: 안 함",
@@ -165,9 +174,34 @@ def test_action_center_settings_table_renders_three_columns(qt_app: QApplication
     assert panel.settings_table.horizontalHeaderItem(1).text() == "현재 상태"
     assert panel.settings_table.horizontalHeaderItem(2).text() == "상세"
     assert panel.settings_table.item(0, 1).text() == "설정됨"
-    assert panel.settings_table.item(0, 2).text() == "적용됨 / 적용 완료"
+    assert panel.settings_table.item(0, 2).text() == "적용 완료"
     assert panel.power_status_label.text() == "정상"
     assert panel.shutdown_status_label.text() == "정상"
+
+
+def test_action_center_test_mode_disables_program_launch_buttons(qt_app: QApplication) -> None:
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), test_mode=True)
+
+    assert panel._launch_buttons
+    assert all(not button.isEnabled() for button in panel._launch_buttons)
+    assert all(button.toolTip() for button in panel._launch_buttons)
+    assert all("\n" not in button.text() for button in panel._launch_buttons)
+
+
+def test_action_center_summary_treats_cannot_confirm_messages_as_unknown() -> None:
+    assert _short_shutdown_status("자동종료 스케줄 상태를 확인할 수 없습니다.") == (
+        "확인 불가",
+        "자동종료 스케줄 상태 확인 필요",
+    )
+    assert _short_power_status("전원 옵션 상태를 확인할 수 없습니다.") == (
+        "확인 불가",
+        "전원 옵션 상태 확인 필요",
+    )
+
+
+def test_app_qss_does_not_keep_unused_tab_widget_styles() -> None:
+    assert "QTabWidget::pane" not in APP_QSS
+    assert "QTabBar::tab" not in APP_QSS
 
 
 class _FakeSettings:

@@ -52,7 +52,7 @@ class NetworkPanel(QWidget):
         self.ip_status_label = QLabel(view_model.ip_status_text)
         self.ip_status_label.setObjectName("mutedText")
         self.adapter_summary = SummaryCard("현재 어댑터", "알 수 없음")
-        self.mode_summary = SummaryCard("할당 방식", "알 수 없음")
+        self.mode_summary = SummaryCard("IP 할당 방식", "확인 불가")
         self.ip_summary = SummaryCard("IP 주소", "알 수 없음")
 
         self.current_table = QTableWidget(0, 2)
@@ -152,7 +152,7 @@ class NetworkPanel(QWidget):
     def _status_card(self) -> QWidget:
         card = Card("현재 네트워크 상태")
         row = QHBoxLayout()
-        label = QLabel("할당 방식")
+        label = QLabel("IP 할당 방식")
         label.setObjectName("fieldLabel")
         row.addWidget(label)
         row.addWidget(self.ip_status_label)
@@ -284,7 +284,7 @@ class NetworkPanel(QWidget):
     def _render_summary(self) -> None:
         adapter = self._view_model.selected_adapter
         self.adapter_summary.set_value(adapter.name if adapter else "알 수 없음")
-        self.mode_summary.set_value(self._view_model.ip_status_text or "알 수 없음")
+        self.mode_summary.set_value(self._view_model.ip_status_text or "확인 불가")
         self.ip_summary.set_value(self.ip_input.text() or "알 수 없음")
 
     def _set_busy(self, is_busy: bool) -> None:

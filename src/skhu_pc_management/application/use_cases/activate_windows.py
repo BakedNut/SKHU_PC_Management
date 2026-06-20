@@ -10,6 +10,9 @@ from skhu_pc_management.ports.process_launcher import ProcessLauncher
 from skhu_pc_management.ports.product_key_provider import ProductKeyProvider
 
 
+CLIPBOARD_AFTER_FAILURE_NOTICE = "제품키는 이미 클립보드에 복사되었을 수 있습니다. 사용 후 다른 값을 복사해 클립보드를 덮어쓰세요."
+
+
 @dataclass(frozen=True)
 class ActivateWindows:
     product_key_provider: ProductKeyProvider
@@ -33,12 +36,23 @@ class ActivateWindows:
 
         try:
             self.clipboard.set_text(product_key)
-            self.process_launcher.launch(Path("slui.exe"))
         except Exception as exc:
             return ActivationResult(
                 success=False,
                 action="windows_activation",
                 message=f"Windows 인증 준비 실패: {exc}",
+                launched_process="slui.exe",
+                copied_to_clipboard=False,
+                error=str(exc),
+            )
+
+        try:
+            self.process_launcher.launch(Path("slui.exe"))
+        except Exception as exc:
+            return ActivationResult(
+                success=False,
+                action="windows_activation",
+                message=f"Windows 인증 준비 실패: {exc} {CLIPBOARD_AFTER_FAILURE_NOTICE}",
                 launched_process="slui.exe",
                 copied_to_clipboard=True,
                 error=str(exc),
