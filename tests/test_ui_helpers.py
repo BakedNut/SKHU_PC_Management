@@ -10,12 +10,15 @@ pytest.importorskip("PySide6.QtWidgets")
 
 from PySide6.QtWidgets import QApplication, QLabel, QTableWidget
 
+from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
+from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
 from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, warning_button
 from skhu_pc_management.presentation.qt.widgets.forms import FieldRow, FormGrid, ReadOnlyField, StatusValueField, read_only_field
 from skhu_pc_management.presentation.qt.widgets.surfaces import SummaryCard
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths
 from skhu_pc_management.presentation.qt.styles import APP_QSS
+from skhu_pc_management.presentation.qt.panels.network_panel import NetworkPanel, _display_network_status_message
 from skhu_pc_management.presentation.qt.panels.action_center_panel import (
     ActionCenterPanel,
     _classroom_summary_value,
@@ -102,7 +105,31 @@ def test_app_qss_contains_modern_scrollbar_and_combobox_styles() -> None:
     assert "QScrollBar::handle:horizontal" in APP_QSS
     assert "QComboBox::drop-down" in APP_QSS
     assert "QComboBox::down-arrow" in APP_QSS
+    assert "image: none;" in APP_QSS
+    assert "border: 0;" in APP_QSS
     assert "QComboBox QAbstractItemView" in APP_QSS
+
+
+def test_network_status_message_filters_successful_adapter_load_text() -> None:
+    assert _display_network_status_message("어댑터 2개를 불러왔습니다.") == ""
+    assert _display_network_status_message("네트워크 어댑터를 불러오는 중입니다...") == ""
+    assert _display_network_status_message("어댑터 조회 실패: PowerShell failed") == "어댑터 조회 실패: PowerShell failed"
+    assert _display_network_status_message("입력 오류: IP 주소 형식이 올바르지 않습니다.") == "입력 오류: IP 주소 형식이 올바르지 않습니다."
+
+
+def test_network_panel_hides_successful_adapter_load_message_and_removes_duplicate_mode_row(qt_app: QApplication) -> None:
+    view_model = NetworkViewModel(_FakeListNetworkAdapters(), _FakeApplyStaticIp(), _FakeSetDhcp(), reload_sleep=lambda _: None)
+    panel = NetworkPanel(view_model)
+
+    panel._load_adapters()
+
+    assert panel.mode_summary.title_label.text() == "IP 할당 방식"
+    assert panel.status_label.isHidden() is True
+    label_texts = [label.text() for label in panel.findChildren(QLabel)]
+    assert "할당 방식" not in label_texts
+    assert label_texts.count("IP 할당 방식") == 1
+    assert panel.current_table.minimumHeight() == 230
+    assert panel.current_table.maximumHeight() == 280
 
 
 def test_classroom_summary_formatter_shortens_status_text() -> None:
@@ -244,3 +271,30 @@ class _FakeActivation:
     selected_windows_version = "windows_11"
     selected_office_version = "2024"
     status_message = ""
+
+
+class _FakeListNetworkAdapters:
+    def execute(self) -> list[NetworkAdapterInfo]:
+        return [
+            NetworkAdapterInfo(
+                name="이더넷",
+                description="Realtek",
+                is_enabled=True,
+                ip_addresses=("192.168.0.10",),
+                subnet_mask="255.255.255.0",
+                gateway="192.168.0.1",
+                dns_servers=("8.8.8.8",),
+                is_dhcp_enabled=False,
+            ),
+            NetworkAdapterInfo(name="Wi-Fi", description="Wi-Fi", is_enabled=False, is_dhcp_enabled=True),
+        ]
+
+
+class _FakeApplyStaticIp:
+    def execute(self, config: object) -> NetworkConfigResult:
+        return NetworkConfigResult("apply_static_ip", True, "이더넷", "ok")
+
+
+class _FakeSetDhcp:
+    def execute(self, adapter_name: str) -> NetworkConfigResult:
+        return NetworkConfigResult("set_dhcp", True, adapter_name, "ok")

@@ -280,7 +280,7 @@ QLineEdit, QTextEdit, QComboBox {
     min-height: 32px;
 }
 QComboBox {
-    padding-right: 28px;
+    padding-right: 32px;
 }
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
     border: 1px solid #2563EB;
@@ -292,7 +292,7 @@ QLineEdit:read-only {
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
-    width: 28px;
+    width: 30px;
     border-left: 1px solid #E5E7EB;
     border-top-right-radius: 8px;
     border-bottom-right-radius: 8px;
@@ -300,15 +300,9 @@ QComboBox::drop-down {
 }
 QComboBox::down-arrow {
     image: none;
+    border: 0;
     width: 0;
     height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #64748B;
-    margin-right: 8px;
-}
-QComboBox::down-arrow:hover {
-    border-top-color: #334155;
 }
 QComboBox QAbstractItemView {
     background: #FFFFFF;

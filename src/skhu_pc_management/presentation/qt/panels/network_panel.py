@@ -49,8 +49,6 @@ class NetworkPanel(QWidget):
         self.validation_label.setObjectName("mutedText")
         self.status_label = QLabel(view_model.status_message)
         self.status_label.setObjectName("mutedText")
-        self.ip_status_label = QLabel(view_model.ip_status_text)
-        self.ip_status_label.setObjectName("mutedText")
         self.adapter_summary = SummaryCard("현재 어댑터", "알 수 없음")
         self.mode_summary = SummaryCard("IP 할당 방식", "확인 불가")
         self.ip_summary = SummaryCard("IP 주소", "알 수 없음")
@@ -59,8 +57,8 @@ class NetworkPanel(QWidget):
         self.current_table.setHorizontalHeaderLabels(["항목", "값"])
         configure_table(self.current_table, compact=True)
         set_column_widths(self.current_table, (140,))
-        self.current_table.setMinimumHeight(260)
-        self.current_table.setMaximumHeight(320)
+        self.current_table.setMinimumHeight(230)
+        self.current_table.setMaximumHeight(280)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -88,6 +86,7 @@ class NetworkPanel(QWidget):
         self.apply_button.clicked.connect(self._apply_static_ip)
         self.dhcp_button.clicked.connect(self._set_dhcp)
         self._apply_test_mode()
+        self._render_status_message()
 
     def _page_header(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -122,7 +121,7 @@ class NetworkPanel(QWidget):
         card = Card("IP 구성")
         form_container = QWidget()
         form_container.setObjectName("transparentContainer")
-        form_container.setMaximumWidth(620)
+        form_container.setMaximumWidth(720)
         grid = QGridLayout(form_container)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(14)
@@ -151,19 +150,13 @@ class NetworkPanel(QWidget):
 
     def _status_card(self) -> QWidget:
         card = Card("현재 네트워크 상태")
-        row = QHBoxLayout()
-        label = QLabel("IP 할당 방식")
-        label.setObjectName("fieldLabel")
-        row.addWidget(label)
-        row.addWidget(self.ip_status_label)
-        row.addStretch()
-        card.body_layout.addLayout(row)
+        card.body_layout.setSpacing(8)
         card.body_layout.addWidget(self.current_table)
         return card
 
     def _load_adapters(self) -> None:
         if self._busy_coordinator and not self._busy_coordinator.try_begin("네트워크 어댑터를 불러오는 중..."):
-            self.status_label.setText("다른 작업이 진행 중입니다.")
+            self._set_status_message("다른 작업이 진행 중입니다.")
             return
         self._set_busy(True)
         try:
@@ -215,12 +208,12 @@ class NetworkPanel(QWidget):
 
     def _apply_static_ip(self) -> None:
         if self._test_mode:
-            self.status_label.setText(TEST_MODE_DISABLED_MESSAGE)
+            self._set_status_message(TEST_MODE_DISABLED_MESSAGE)
             return
         if QMessageBox.question(self, "IP 설정 적용", "입력한 네트워크 설정을 적용하시겠습니까?") != QMessageBox.Yes:
             return
         if self._busy_coordinator and not self._busy_coordinator.try_begin("IP 설정을 적용하는 중..."):
-            self.status_label.setText("다른 작업이 진행 중입니다.")
+            self._set_status_message("다른 작업이 진행 중입니다.")
             return
         self._set_busy(True)
         try:
@@ -240,12 +233,12 @@ class NetworkPanel(QWidget):
 
     def _set_dhcp(self) -> None:
         if self._test_mode:
-            self.status_label.setText(TEST_MODE_DISABLED_MESSAGE)
+            self._set_status_message(TEST_MODE_DISABLED_MESSAGE)
             return
         if QMessageBox.question(self, "자동 IP(DHCP)로 전환", "선택한 어댑터를 DHCP로 전환하시겠습니까?") != QMessageBox.Yes:
             return
         if self._busy_coordinator and not self._busy_coordinator.try_begin("DHCP로 전환하는 중..."):
-            self.status_label.setText("다른 작업이 진행 중입니다.")
+            self._set_status_message("다른 작업이 진행 중입니다.")
             return
         self._set_busy(True)
         try:
@@ -257,9 +250,8 @@ class NetworkPanel(QWidget):
                 self._busy_coordinator.end(self._view_model.status_message)
 
     def _render_status(self) -> None:
-        self.status_label.setText(self._view_model.status_message)
+        self._render_status_message()
         self._render_validation()
-        self.ip_status_label.setText(self._view_model.ip_status_text)
         self.current_table.setRowCount(len(self._view_model.current_network_info_rows))
         for row_index, row in enumerate(self._view_model.current_network_info_rows):
             self.current_table.setItem(row_index, 0, table_item(row[0]))
@@ -284,8 +276,17 @@ class NetworkPanel(QWidget):
     def _render_summary(self) -> None:
         adapter = self._view_model.selected_adapter
         self.adapter_summary.set_value(adapter.name if adapter else "알 수 없음")
-        self.mode_summary.set_value(self._view_model.ip_status_text or "확인 불가")
+        mode_text = self._view_model.ip_status_text or "확인 불가"
+        self.mode_summary.set_value(mode_text, tone=_network_mode_tone(mode_text))
         self.ip_summary.set_value(self.ip_input.text() or "알 수 없음")
+
+    def _render_status_message(self) -> None:
+        self._set_status_message(self._view_model.status_message)
+
+    def _set_status_message(self, message: str) -> None:
+        display_message = _display_network_status_message(message)
+        self.status_label.setText(display_message)
+        self.status_label.setVisible(bool(display_message))
 
     def _set_busy(self, is_busy: bool) -> None:
         self.refresh_button.setEnabled(not is_busy)
@@ -299,8 +300,28 @@ class NetworkPanel(QWidget):
         for button in (self.apply_button, self.dhcp_button):
             button.setEnabled(False)
             button.setToolTip(TEST_MODE_DISABLED_MESSAGE)
-        self.status_label.setText(TEST_MODE_DISABLED_MESSAGE)
+        self._set_status_message(TEST_MODE_DISABLED_MESSAGE)
 
 
 def _add_field(grid: QGridLayout, row: int, column: int, label_text: str, widget: QWidget) -> None:
     grid.addWidget(FieldRow(label_text, widget), row, column)
+
+
+def _display_network_status_message(message: str) -> str:
+    text = message.strip()
+    if not text:
+        return ""
+    suppressed_fragments = (
+        "네트워크 어댑터를 불러오지 않았습니다.",
+        "네트워크 어댑터를 불러오는 중입니다",
+        "개를 불러왔습니다.",
+    )
+    if any(fragment in text for fragment in suppressed_fragments):
+        return ""
+    return text
+
+
+def _network_mode_tone(mode_text: str) -> str:
+    if mode_text == "확인 불가":
+        return "warning"
+    return "neutral"
