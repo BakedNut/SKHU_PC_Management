@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QTableWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QTableWidget
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
@@ -239,6 +239,10 @@ def test_action_center_settings_table_renders_three_columns(qt_app: QApplication
     assert panel.settings_table.item(0, 2).text() == "적용 완료"
     assert panel.power_status_label.text() == "정상"
     assert panel.shutdown_status_label.text() == "정상"
+    assert panel.office_status_label.text() == "현재 감지: Office 2024"
+    assert not hasattr(panel, "office_summary")
+    summary_titles = [card.title_label.text() for card in panel.findChildren(SummaryCard)]
+    assert summary_titles == ["설정 상태", "PC 점검", "강의실 정책"]
 
 
 def test_action_center_test_mode_disables_program_launch_buttons(qt_app: QApplication) -> None:
@@ -248,6 +252,42 @@ def test_action_center_test_mode_disables_program_launch_buttons(qt_app: QApplic
     assert all(not button.isEnabled() for button in panel._launch_buttons)
     assert all(button.toolTip() for button in panel._launch_buttons)
     assert all("\n" not in button.text() for button in panel._launch_buttons)
+
+
+def test_action_center_quick_tool_button_order(qt_app: QApplication) -> None:
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation())
+
+    quick_tool_labels = {
+        "휴지통 비우기",
+        "Chrome 사용자 데이터 초기화",
+        "Edge 사용자 데이터 초기화",
+        "Chrome 실행",
+        "Edge 실행",
+        "팟플레이어 실행",
+        "반디집 실행",
+    }
+    button_texts = [button.text() for button in panel.findChildren(QPushButton) if button.text() in quick_tool_labels]
+
+    assert button_texts == [
+        "휴지통 비우기",
+        "Chrome 사용자 데이터 초기화",
+        "Edge 사용자 데이터 초기화",
+        "Chrome 실행",
+        "Edge 실행",
+        "팟플레이어 실행",
+        "반디집 실행",
+    ]
+
+
+def test_action_center_office_status_uses_detected_prefix_and_keeps_buttons_enabled(qt_app: QApplication) -> None:
+    pc_check = _FakePcCheck()
+    pc_check.installed_office_status_text = "현재 감지: Office 365"
+    panel = ActionCenterPanel(_FakeSettings(), pc_check, _FakeActivation())
+
+    assert panel.office_status_label.text() == "현재 감지: Office 365"
+    assert panel.office2021_radio.isEnabled()
+    assert panel.office2024_radio.isEnabled()
+    assert panel.office_activation_button.isEnabled()
 
 
 def test_action_center_summary_treats_cannot_confirm_messages_as_unknown() -> None:
@@ -281,7 +321,7 @@ class _FakeSettings:
 
 class _FakePcCheck:
     result_rows = [("전원", "정상", "문제 없음")]
-    installed_office_status_text = "권장 Office 버전이 설치됨"
+    installed_office_status_text = "현재 감지: Office 2024"
     power_option_status_text = "전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함, 절전: 안 함, 최대 절전: 안 함"
     auto_shutdown_status_text = "23시 자동종료 스케줄이 정상 등록되어 있습니다."
 

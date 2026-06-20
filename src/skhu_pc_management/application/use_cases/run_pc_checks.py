@@ -156,14 +156,20 @@ class OfficeInstallCheck:
                 message="Office 2021 또는 2024가 설치되어 있지 않습니다.",
             )
 
-        is_recommended = "2021" in office_name or "2024" in office_name
+        office_kind = _classify_office_version(office_name)
+        display_name = _display_office_name(office_name)
+        is_supported = office_kind in {"2021", "2024", "365"}
+        if is_supported:
+            message = f"{display_name}{_subject_particle(display_name)} 설치되어 있습니다."
+        else:
+            message = f"권장하지 않는 Office 버전이 설치되어 있습니다: {display_name}"
         return CheckResult(
             check_id="office_install",
             label="Office 설치 확인",
             category=CheckCategory.OFFICE,
-            status=CheckStatus.OK if is_recommended else CheckStatus.WARNING,
-            message="권장 Office 버전이 설치되어 있습니다." if is_recommended else "권장하지 않는 Office 버전이 설치되어 있습니다.",
-            detail=office_name,
+            status=CheckStatus.OK if is_supported else CheckStatus.WARNING,
+            message=message,
+            detail=display_name,
             raw_value=office_name,
         )
 
@@ -413,3 +419,38 @@ def _normalize_local_version(program_id: str, version: str | None) -> str | None
     if text in {"0.0", "0.0.0.0"} or "0, 0, 0, 0" in text:
         return None
     return text
+
+
+def _classify_office_version(office_name: str) -> str:
+    text = office_name.lower()
+    if "2024" in text:
+        return "2024"
+    if "2021" in text:
+        return "2021"
+    if "365" in text or "microsoft 365" in text or "office 365" in text:
+        return "365"
+    return "other"
+
+
+def _display_office_name(office_name: str) -> str:
+    office_kind = _classify_office_version(office_name)
+    if office_kind == "2024":
+        return "Office 2024"
+    if office_kind == "2021":
+        return "Office 2021"
+    if office_kind == "365":
+        return "Office 365"
+    return office_name.strip() or "Office"
+
+
+def _subject_particle(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "가"
+    last = stripped[-1]
+    if last.isdigit():
+        return "이" if last in {"0", "1", "3", "6", "7", "8"} else "가"
+    code = ord(last)
+    if 0xAC00 <= code <= 0xD7A3:
+        return "이" if (code - 0xAC00) % 28 else "가"
+    return "가"

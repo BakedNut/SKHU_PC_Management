@@ -109,7 +109,6 @@ class ActionCenterPanel(QWidget):
         self.refresh_status_button = primary_button("상태 새로고침")
         self.settings_summary = SummaryCard("설정 상태", "상태 확인 필요")
         self.pc_check_summary = SummaryCard("PC 점검", "점검 필요")
-        self.office_summary = SummaryCard("Office", "미확인")
         self.classroom_summary = SummaryCard("강의실 정책", "미확인")
 
         root = QVBoxLayout(self)
@@ -151,10 +150,9 @@ class ActionCenterPanel(QWidget):
     def _summary_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(12)
-        row.addWidget(self.settings_summary)
-        row.addWidget(self.pc_check_summary)
-        row.addWidget(self.office_summary)
-        row.addWidget(self.classroom_summary)
+        row.addWidget(self.settings_summary, 1)
+        row.addWidget(self.pc_check_summary, 1)
+        row.addWidget(self.classroom_summary, 1)
         return row
 
     def _body_layout(self) -> QHBoxLayout:
@@ -212,7 +210,7 @@ class ActionCenterPanel(QWidget):
         self.office_group.addButton(self.office2024_radio)
         self.office_activation_button = primary_button("복사 및 Excel 실행")
         self.office_activation_button.setObjectName("activationActionButton")
-        self.office_status_label = QLabel("설치된 Office 상태: 미확인")
+        self.office_status_label = QLabel("현재 감지: 미확인")
         self.office_status_label.setObjectName("mutedText")
         self.office_activation_button.setFixedWidth(220)
         office_options = _option_column(
@@ -293,12 +291,12 @@ class ActionCenterPanel(QWidget):
         grid.setVerticalSpacing(10)
         actions = (
             ("휴지통 비우기", "정리 작업", lambda: self._run_maintenance("empty_recycle_bin"), "warning"),
+            ("Chrome 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_chrome_history"), "danger"),
+            ("Edge 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_edge_history"), "danger"),
             ("Chrome 실행", "브라우저 실행", lambda: self._launch_program("chrome"), "secondary"),
             ("Edge 실행", "브라우저 실행", lambda: self._launch_program("edge"), "secondary"),
             ("팟플레이어 실행", "동영상 플레이어", lambda: self._launch_program("potplayer"), "secondary"),
             ("반디집 실행", "압축 프로그램", lambda: self._launch_program("bandizip"), "secondary"),
-            ("Chrome 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_chrome_history"), "danger"),
-            ("Edge 사용자 데이터 초기화", "User Data 전체 삭제", lambda: self._run_maintenance("delete_edge_history"), "danger"),
         )
         for index, (label, description, callback, role) in enumerate(actions):
             button = QPushButton(label)
@@ -529,7 +527,7 @@ class ActionCenterPanel(QWidget):
     def _sync_status_summaries(self) -> None:
         self.settings_summary.set_value(self._settings.summary_text, tone=_settings_summary_tone(self._settings))
         self.pc_check_summary.set_value(self._pc_check.summary_text, tone=_pc_check_summary_tone(self._pc_check))
-        self.office_summary.set_value(self._pc_check.installed_office_status_text, tone=_office_summary_tone(self._pc_check.installed_office_status_text))
+        office_text = _office_detected_text(self._pc_check.installed_office_status_text)
         classroom_value, classroom_subtitle, classroom_tone = _classroom_summary_value(
             self._pc_check.power_option_status_text,
             self._pc_check.auto_shutdown_status_text,
@@ -548,7 +546,7 @@ class ActionCenterPanel(QWidget):
         self.power_description_label.setToolTip(self._pc_check.power_option_status_text)
         self.shutdown_description_label.setText(shutdown_description)
         self.shutdown_description_label.setToolTip(self._pc_check.auto_shutdown_status_text)
-        self.office_status_label.setText(f"설치된 Office 상태: {self._pc_check.installed_office_status_text}")
+        self.office_status_label.setText(office_text)
 
     def _launch_program(self, program_id: str) -> None:
         if self._launch_program_use_case is None:
@@ -647,12 +645,14 @@ def _pc_check_summary_tone(pc_check: PcCheckViewModel) -> str:
     return "danger" if pc_check.error_count or pc_check.warning_count or pc_check.unknown_count else "success"
 
 
-def _office_summary_tone(text: str) -> str:
-    if _contains_any(text, ("권장", "설치됨", "정상", "최신")) and not _contains_any(text, ("설치되어 있지", "권장하지", "주의", "오류", "확인")):
-        return "success"
-    if _contains_any(text, ("미확인", "알 수 없음")):
-        return "danger"
-    return "danger" if _contains_any(text, ("설치되어 있지", "권장하지", "주의", "오류", "실패")) else "neutral"
+def _office_detected_text(text: str) -> str:
+    if not text or text == "미확인":
+        return "현재 감지: 미확인"
+    if text.startswith("현재 감지:"):
+        return text
+    if _contains_any(text, ("설치되어 있지", "설치되지")):
+        return "현재 감지: 없음"
+    return f"현재 감지: {text}"
 
 
 def _classroom_summary_value(power_text: str, shutdown_text: str) -> tuple[str, str, str]:

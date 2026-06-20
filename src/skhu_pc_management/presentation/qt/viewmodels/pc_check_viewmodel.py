@@ -9,7 +9,7 @@ class PcCheckViewModel:
     run_pc_checks_use_case: Any
     status_message: str = "PC 점검을 실행하지 않았습니다."
     result_rows: list[tuple[str, str, str]] = field(default_factory=list)
-    installed_office_status_text: str = "미확인"
+    installed_office_status_text: str = "현재 감지: 미확인"
     power_option_status_text: str = "미확인"
     auto_shutdown_status_text: str = "미확인"
     is_busy: bool = False
@@ -64,7 +64,15 @@ class PcCheckViewModel:
             status = _display_status(result.status)
             summary = message or status
             if result.check_id == "office_install":
-                self.installed_office_status_text = summary
+                detail = getattr(result, "detail", None)
+                if detail:
+                    self.installed_office_status_text = f"현재 감지: {detail}"
+                elif "설치되어 있지" in message or "설치되지" in message:
+                    self.installed_office_status_text = "현재 감지: 없음"
+                elif status == "알 수 없음":
+                    self.installed_office_status_text = "현재 감지: 미확인"
+                else:
+                    self.installed_office_status_text = f"현재 감지: {summary}"
             elif result.check_id == "power_settings":
                 self.power_option_status_text = summary
             elif result.check_id == "auto_shutdown_schedule":

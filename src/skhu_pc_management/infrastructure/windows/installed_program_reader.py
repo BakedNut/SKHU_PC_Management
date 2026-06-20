@@ -111,9 +111,21 @@ _PROGRAM_PATHS = {
 
 def _is_office_display_name(display_name: str) -> bool:
     text = display_name.lower()
-    return (
-        "microsoft office" in text
-        and any(token in text for token in ("professional", "standard", "ltsc", "home and business"))
+    if "microsoft 365" in text or "office 365" in text:
+        return True
+    if "microsoft office" not in text:
+        return False
+    return any(
+        token in text
+        for token in (
+            "professional",
+            "standard",
+            "ltsc",
+            "home and business",
+            "365",
+            "2021",
+            "2024",
+        )
     )
 
 

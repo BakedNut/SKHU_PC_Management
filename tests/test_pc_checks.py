@@ -12,6 +12,8 @@ from skhu_pc_management.application.use_cases.run_pc_checks import (
     ProgramVersionCheck,
     RecycleBinCheck,
     RunPcChecks,
+    _classify_office_version,
+    _display_office_name,
     compare_versions,
 )
 from skhu_pc_management.domain.checks.models import (
@@ -29,6 +31,7 @@ from skhu_pc_management.infrastructure.windows import installed_program_reader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import WindowsInstalledProgramReader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import (
     _extract_bandizip_version,
+    _is_office_display_name,
     _parse_potplayer_history_version,
 )
 from skhu_pc_management.infrastructure.windows.latest_version_provider import (
@@ -294,8 +297,50 @@ def test_office_check_reports_recommended_version_ok() -> None:
     result = OfficeInstallCheck(reader).run()
 
     assert result.status == CheckStatus.OK
-    assert result.detail == reader.office_name
-    assert result.message == "권장 Office 버전이 설치되어 있습니다."
+    assert result.detail == "Office 2024"
+    assert result.raw_value == reader.office_name
+    assert result.message == "Office 2024가 설치되어 있습니다."
+
+
+def test_office_check_reports_2021_display_name() -> None:
+    reader = FakeInstalledProgramReader()
+    reader.office_name = "Microsoft Office Professional Plus 2021"
+
+    result = OfficeInstallCheck(reader).run()
+
+    assert result.status == CheckStatus.OK
+    assert result.detail == "Office 2021"
+    assert result.message == "Office 2021이 설치되어 있습니다."
+
+
+def test_office_check_reports_microsoft_365_display_name() -> None:
+    reader = FakeInstalledProgramReader()
+    reader.office_name = "Microsoft 365 Apps for enterprise"
+
+    result = OfficeInstallCheck(reader).run()
+
+    assert result.status == CheckStatus.OK
+    assert result.detail == "Office 365"
+    assert result.raw_value == "Microsoft 365 Apps for enterprise"
+    assert result.message == "Office 365가 설치되어 있습니다."
+
+
+def test_office_check_reports_unknown_office_as_warning() -> None:
+    reader = FakeInstalledProgramReader()
+    reader.office_name = "Microsoft Office Home and Student 2019"
+
+    result = OfficeInstallCheck(reader).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.detail == "Microsoft Office Home and Student 2019"
+    assert result.message == "권장하지 않는 Office 버전이 설치되어 있습니다: Microsoft Office Home and Student 2019"
+
+
+def test_office_display_helpers_classify_common_names() -> None:
+    assert _classify_office_version("Microsoft Office LTSC Professional Plus 2024") == "2024"
+    assert _classify_office_version("Microsoft Office Professional Plus 2021") == "2021"
+    assert _classify_office_version("Microsoft 365 Apps for business") == "365"
+    assert _display_office_name("Microsoft Office 365 ProPlus") == "Office 365"
 
 
 def test_office_check_reports_missing_in_korean() -> None:
@@ -303,6 +348,16 @@ def test_office_check_reports_missing_in_korean() -> None:
 
     assert result.status == CheckStatus.WARNING
     assert result.message == "Office 2021 또는 2024가 설치되어 있지 않습니다."
+
+
+def test_office_display_name_detection_includes_365_without_false_positives() -> None:
+    assert _is_office_display_name("Microsoft 365 Apps for enterprise") is True
+    assert _is_office_display_name("Microsoft 365 Apps for business") is True
+    assert _is_office_display_name("Microsoft Office 365 ProPlus") is True
+    assert _is_office_display_name("Microsoft Office LTSC Professional Plus 2024") is True
+    assert _is_office_display_name("Microsoft Office Professional Plus 2021") is True
+    assert _is_office_display_name("Microsoft Teams") is False
+    assert _is_office_display_name("Microsoft Edge") is False
 
 
 def test_power_settings_check_reports_warning_when_timeout_is_enabled() -> None:

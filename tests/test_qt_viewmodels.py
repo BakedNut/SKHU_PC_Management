@@ -277,6 +277,50 @@ def test_pc_check_viewmodel_translates_common_messages() -> None:
     ]
 
 
+def test_pc_check_viewmodel_uses_office_detail_for_detected_summary() -> None:
+    class FakeRunOfficeChecks:
+        def __init__(self, detail: str) -> None:
+            self.detail = detail
+
+        def execute(self) -> list[CheckResult]:
+            return [
+                CheckResult(
+                    check_id="office_install",
+                    label="Office 설치 확인",
+                    status=CheckStatus.OK,
+                    message=f"{self.detail}가 설치되어 있습니다.",
+                    detail=self.detail,
+                )
+            ]
+
+    view_model = PcCheckViewModel(FakeRunOfficeChecks("Office 2024"))
+    view_model.run_checks()
+    assert view_model.installed_office_status_text == "현재 감지: Office 2024"
+
+    view_model = PcCheckViewModel(FakeRunOfficeChecks("Office 365"))
+    view_model.run_checks()
+    assert view_model.installed_office_status_text == "현재 감지: Office 365"
+
+
+def test_pc_check_viewmodel_uses_none_for_missing_office_summary() -> None:
+    class FakeRunMissingOfficeChecks:
+        def execute(self) -> list[CheckResult]:
+            return [
+                CheckResult(
+                    check_id="office_install",
+                    label="Office 설치 확인",
+                    status=CheckStatus.WARNING,
+                    message="Office 2021 또는 2024가 설치되어 있지 않습니다.",
+                )
+            ]
+
+    view_model = PcCheckViewModel(FakeRunMissingOfficeChecks())
+
+    view_model.run_checks()
+
+    assert view_model.installed_office_status_text == "현재 감지: 없음"
+
+
 def test_activation_viewmodel_does_not_expose_product_key() -> None:
     windows = FakeActivation("windows_activation")
     office = FakeActivation("office_activation")
