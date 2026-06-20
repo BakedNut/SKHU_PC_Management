@@ -81,6 +81,11 @@ QFrame#warningBanner {
     border: 1px solid #FDE68A;
     border-radius: 10px;
 }
+QFrame#comboShell {
+    background: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    border-radius: 8px;
+}
 QLabel#appTitle {
     color: #111827;
     font-size: 20px;
@@ -312,6 +317,30 @@ QComboBox QAbstractItemView {
     selection-color: #111827;
     outline: 0;
 }
+QComboBox#comboInShell {
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    padding: 7px 8px;
+    min-height: 32px;
+}
+QComboBox#comboInShell::drop-down {
+    border: 0;
+    width: 0;
+}
+QComboBox#comboInShell::down-arrow {
+    image: none;
+    border: 0;
+    width: 0;
+    height: 0;
+}
+QLabel#comboArrow {
+    background: transparent;
+    color: #64748B;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 0 10px 0 4px;
+}
 QCheckBox, QRadioButton {
     color: #111827;
     spacing: 8px;
@@ -324,6 +353,12 @@ QTableWidget {
     gridline-color: #F8FAFC;
     selection-background-color: #EFF6FF;
     selection-color: #111827;
+}
+QTableWidget[compact="true"] {
+    font-size: 12px;
+}
+QTableWidget[compact="true"]::item {
+    padding: 4px 8px;
 }
 QHeaderView::section {
     background: #F9FAFB;

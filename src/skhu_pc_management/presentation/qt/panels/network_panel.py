@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -57,8 +58,8 @@ class NetworkPanel(QWidget):
         self.current_table.setHorizontalHeaderLabels(["항목", "값"])
         configure_table(self.current_table, compact=True)
         set_column_widths(self.current_table, (140,))
-        self.current_table.setMinimumHeight(230)
-        self.current_table.setMaximumHeight(280)
+        self.current_table.setMinimumHeight(190)
+        self.current_table.setMaximumHeight(250)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -114,19 +115,24 @@ class NetworkPanel(QWidget):
         body = QHBoxLayout()
         body.setSpacing(14)
         body.addWidget(self._config_card(), 3)
-        body.addWidget(self._status_card(), 2)
+        right = QVBoxLayout()
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(0)
+        right.addWidget(self._status_card())
+        right.addStretch()
+        body.addLayout(right, 2)
         return body
 
     def _config_card(self) -> QWidget:
         card = Card("IP 구성")
         form_container = QWidget()
         form_container.setObjectName("transparentContainer")
-        form_container.setMaximumWidth(720)
+        form_container.setMaximumWidth(760)
         grid = QGridLayout(form_container)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(12)
-        _add_field(grid, 0, 0, "어댑터", self.adapter_combo)
+        _add_field(grid, 0, 0, "어댑터", _combo_with_arrow(self.adapter_combo))
         _add_field(grid, 1, 0, "IP 주소", self.ip_input)
         _add_field(grid, 1, 1, "서브넷 마스크", self.subnet_input)
         _add_field(grid, 2, 0, "기본 게이트웨이", self.gateway_input)
@@ -256,6 +262,7 @@ class NetworkPanel(QWidget):
         for row_index, row in enumerate(self._view_model.current_network_info_rows):
             self.current_table.setItem(row_index, 0, table_item(row[0]))
             self.current_table.setItem(row_index, 1, table_item(row[1]))
+        self._resize_current_table_to_contents()
         self._render_summary()
 
     def _render_validation(self) -> None:
@@ -288,6 +295,9 @@ class NetworkPanel(QWidget):
         self.status_label.setText(display_message)
         self.status_label.setVisible(bool(display_message))
 
+    def _resize_current_table_to_contents(self) -> None:
+        self.current_table.setFixedHeight(_current_table_height(self.current_table.rowCount()))
+
     def _set_busy(self, is_busy: bool) -> None:
         self.refresh_button.setEnabled(not is_busy)
         self.defaults_button.setEnabled(not is_busy)
@@ -305,6 +315,23 @@ class NetworkPanel(QWidget):
 
 def _add_field(grid: QGridLayout, row: int, column: int, label_text: str, widget: QWidget) -> None:
     grid.addWidget(FieldRow(label_text, widget), row, column)
+
+
+def _combo_with_arrow(combo: QComboBox) -> QWidget:
+    wrapper = QFrame()
+    wrapper.setObjectName("comboShell")
+    layout = QHBoxLayout(wrapper)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+
+    combo.setObjectName("comboInShell")
+    arrow = QLabel("▾")
+    arrow.setObjectName("comboArrow")
+    arrow.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    layout.addWidget(combo, 1)
+    layout.addWidget(arrow)
+    return wrapper
 
 
 def _display_network_status_message(message: str) -> str:
@@ -325,3 +352,9 @@ def _network_mode_tone(mode_text: str) -> str:
     if mode_text == "확인 불가":
         return "warning"
     return "neutral"
+
+
+def _current_table_height(row_count: int) -> int:
+    normalized_row_count = max(1, row_count)
+    height = 42 + normalized_row_count * 28
+    return min(max(height, 180), 250)

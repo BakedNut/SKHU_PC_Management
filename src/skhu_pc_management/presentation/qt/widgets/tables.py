@@ -17,6 +17,7 @@ TONE_COLORS = {
 
 
 def configure_table(table: QTableWidget, stretch_last: bool = True, compact: bool = False) -> None:
+    table.setProperty("compact", compact)
     table.setAlternatingRowColors(True)
     table.verticalHeader().setVisible(False)
     table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -26,7 +27,7 @@ def configure_table(table: QTableWidget, stretch_last: bool = True, compact: boo
     table.horizontalHeader().setStretchLastSection(stretch_last)
     table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-    table.verticalHeader().setDefaultSectionSize(30 if compact else 36)
+    table.verticalHeader().setDefaultSectionSize(28 if compact else 34)
 
 
 def set_column_widths(table: QTableWidget, widths: tuple[int, ...], stretch_last: bool = True) -> None:

@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from PySide6.QtWidgets import QApplication, QLabel, QTableWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QTableWidget
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
@@ -18,7 +18,12 @@ from skhu_pc_management.presentation.qt.widgets.forms import FieldRow, FormGrid,
 from skhu_pc_management.presentation.qt.widgets.surfaces import SummaryCard
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths
 from skhu_pc_management.presentation.qt.styles import APP_QSS
-from skhu_pc_management.presentation.qt.panels.network_panel import NetworkPanel, _display_network_status_message
+from skhu_pc_management.presentation.qt.panels.network_panel import (
+    NetworkPanel,
+    _combo_with_arrow,
+    _current_table_height,
+    _display_network_status_message,
+)
 from skhu_pc_management.presentation.qt.panels.action_center_panel import (
     ActionCenterPanel,
     _classroom_summary_value,
@@ -87,6 +92,14 @@ def test_table_column_helper_keeps_last_column_stretch(qt_app: QApplication) -> 
     assert table.columnWidth(1) == 80
 
 
+def test_compact_table_helper_sets_compact_property_and_row_height(qt_app: QApplication) -> None:
+    table = QTableWidget(0, 2)
+    configure_table(table, compact=True)
+
+    assert table.property("compact") is True
+    assert table.verticalHeader().defaultSectionSize() == 28
+
+
 def test_summary_card_tone_property_updates(qt_app: QApplication) -> None:
     card = SummaryCard("설정 상태", "정상")
 
@@ -108,6 +121,28 @@ def test_app_qss_contains_modern_scrollbar_and_combobox_styles() -> None:
     assert "image: none;" in APP_QSS
     assert "border: 0;" in APP_QSS
     assert "QComboBox QAbstractItemView" in APP_QSS
+    assert "QFrame#comboShell" in APP_QSS
+    assert "QLabel#comboArrow" in APP_QSS
+    assert "QComboBox#comboInShell::down-arrow" in APP_QSS
+
+
+def test_combo_with_arrow_wraps_combobox_with_visible_indicator(qt_app: QApplication) -> None:
+    combo = QComboBox()
+
+    wrapper = _combo_with_arrow(combo)
+
+    assert wrapper.objectName() == "comboShell"
+    assert combo.objectName() == "comboInShell"
+    arrows = wrapper.findChildren(QLabel, "comboArrow")
+    assert len(arrows) == 1
+    assert arrows[0].text() == "▾"
+
+
+def test_current_network_table_height_is_bounded() -> None:
+    assert _current_table_height(0) == 180
+    assert _current_table_height(1) == 180
+    assert _current_table_height(7) == 238
+    assert _current_table_height(20) == 250
 
 
 def test_network_status_message_filters_successful_adapter_load_text() -> None:
@@ -128,8 +163,8 @@ def test_network_panel_hides_successful_adapter_load_message_and_removes_duplica
     label_texts = [label.text() for label in panel.findChildren(QLabel)]
     assert "할당 방식" not in label_texts
     assert label_texts.count("IP 할당 방식") == 1
-    assert panel.current_table.minimumHeight() == 230
-    assert panel.current_table.maximumHeight() == 280
+    assert panel.current_table.minimumHeight() == 238
+    assert panel.current_table.maximumHeight() == 238
 
 
 def test_classroom_summary_formatter_shortens_status_text() -> None:
