@@ -5,16 +5,35 @@ from typing import Any
 
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo, LoadPcInfoUseCase
 from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
+from skhu_pc_management.infrastructure.windows.dxgi_gpu_reader import (
+    DxgiGpuInfo,
+    format_dxgi_gpu_memory,
+    is_basic_display_adapter_name,
+    is_integrated_dxgi_gpu,
+    is_virtual_display_adapter_name,
+    select_representative_dxgi_gpu,
+)
+from skhu_pc_management.infrastructure.windows.network_identity_reader import (
+    IF_TYPE_ETHERNET_CSMACD,
+    NetworkIdentityCandidate,
+    normalize_mac_address,
+    select_network_identity_candidate,
+)
+from skhu_pc_management.infrastructure.windows import wmi_pc_info_reader
 from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import (
     _PhysicalDiskMetadata,
     _GpuCandidate,
     _NetworkCandidate,
+    _build_disk_type_by_index_from_storage_wmi,
     _build_disk_info,
+    _detect_disk_type_from_physical_drive,
     _disk_type_summaries,
     _format_rated_size,
     _format_gpu_memory,
     _is_usb_or_removable_disk,
+    _memory_type_from_code,
     _normalize_os_caption,
+    _resolve_disk_index,
     _select_network_candidate,
     _select_representative_gpu,
     WmiPcInfoReader,
@@ -52,6 +71,8 @@ class WmiItem:
     PNPDeviceID: str | None = None
     DeviceID: str | None = None
     Index: str | None = None
+    Number: Any | None = None
+    UniqueId: str | None = None
     FriendlyName: str | None = None
     BusType: Any | None = None
     SpecVersion: str | None = None
@@ -106,6 +127,12 @@ class ControlledWmiPcInfoReader(WmiPcInfoReader):
 
     def _wmi_items(self, wmi_class: str, namespace: str | None = None) -> list[Any]:
         return self.wmi_items_by_class.get((wmi_class, namespace), [])
+
+    def _read_dxgi_gpu_info(self) -> tuple[str, str, list[str]] | None:
+        return None
+
+    def _read_network_identity(self) -> tuple[str, str] | None:
+        return None
 
 
 def test_load_pc_info_use_case_uses_reader_port() -> None:
@@ -482,6 +509,30 @@ def test_gpu_candidate_selection_prefers_larger_dedicated_memory() -> None:
     assert _format_gpu_memory(_GpuCandidate("Intel UHD Graphics", is_integrated=True)) == "없음(내장그래픽)"
 
 
+def test_dxgi_gpu_helpers_select_physical_gpu_and_format_memory() -> None:
+    selected = select_representative_dxgi_gpu(
+        [
+            DxgiGpuInfo("VMware Virtual Display", 16 * 1024**2, is_virtual=True),
+            DxgiGpuInfo("Intel UHD Graphics", 128 * 1024**2, shared_memory_bytes=8 * 1024**3, vendor_id=0x8086),
+            DxgiGpuInfo("NVIDIA GeForce RTX 4070 SUPER", 12 * 1024**3),
+            DxgiGpuInfo("NVIDIA GeForce RTX 3060", 8 * 1024**3),
+        ]
+    )
+
+    assert selected is not None
+    assert selected.name == "NVIDIA GeForce RTX 4070 SUPER"
+    assert format_dxgi_gpu_memory(selected) == "12GB"
+    assert is_virtual_display_adapter_name("VMware Virtual Display") is True
+    assert is_basic_display_adapter_name("Microsoft Basic Display Adapter") is True
+    assert is_integrated_dxgi_gpu(vendor_id=0x8086, dedicated_memory_bytes=128 * 1024**2, shared_memory_bytes=8 * 1024**3) is True
+    assert format_dxgi_gpu_memory(DxgiGpuInfo("Intel UHD Graphics", 128 * 1024**2, is_integrated=True)) == "없음(내장그래픽)"
+
+
+def test_wmi_gpu_fallback_does_not_trust_suspicious_dgpu_one_gb() -> None:
+    assert _format_gpu_memory(_GpuCandidate("NVIDIA GeForce RTX 4070 SUPER", adapter_memory_bytes=1024**3)) == "알 수 없음"
+    assert _format_gpu_memory(_GpuCandidate("Intel UHD Graphics", adapter_memory_bytes=128 * 1024**2, is_integrated=True)) == "없음(내장그래픽)"
+
+
 def test_disk_helpers_exclude_usb_and_group_capacity_summaries() -> None:
     assert _is_usb_or_removable_disk(WmiItem(Model="USB Disk", InterfaceType="USB", PNPDeviceID="USBSTOR\\Disk")) is True
     assert _is_usb_or_removable_disk(WmiItem(Model="Samsung NVMe SSD", InterfaceType="SCSI")) is False
@@ -500,6 +551,33 @@ def test_disk_helpers_exclude_usb_and_group_capacity_summaries() -> None:
     assert summaries["SSD"] == "1개(256GB x1)"
     assert summaries["HDD"] == "1개(512GB x1)"
     assert summaries["Unknown"] == "1개(알 수 없음 x1)"
+
+
+def test_disk_index_and_storage_wmi_type_map_helpers(monkeypatch) -> None:
+    assert _resolve_disk_index(WmiItem(Index="1", DeviceID=r"\\.\PHYSICALDRIVE9")) == 1
+    assert _resolve_disk_index(WmiItem(DeviceID=r"\\.\PHYSICALDRIVE2")) == 2
+
+    type_map = _build_disk_type_by_index_from_storage_wmi(
+        [
+            WmiItem(Number=0, Model="NVMe Disk", FriendlyName="NVMe Disk", Size=str(512 * 1024**3), BusType=17),
+            WmiItem(Number=1, Model="HDD Disk", FriendlyName="HDD Disk", Size=str(1024 * 1024**3), BusType=11),
+            WmiItem(Number=2, Model="SSD Disk", FriendlyName="SSD Disk", Size=str(256 * 1024**3), BusType=11),
+        ],
+        [
+            WmiItem(FriendlyName="HDD Disk", MediaType=3, BusType=11, Size=str(1024 * 1024**3)),
+            WmiItem(FriendlyName="SSD Disk", MediaType=4, BusType=11, Size=str(256 * 1024**3)),
+        ],
+    )
+
+    assert type_map == {0: "NVMe", 1: "HDD", 2: "SSD"}
+
+    monkeypatch.setattr(wmi_pc_info_reader, "_query_physical_drive_bus_type", lambda index: 17)
+    assert _detect_disk_type_from_physical_drive(0) == "NVMe"
+    monkeypatch.setattr(wmi_pc_info_reader, "_query_physical_drive_bus_type", lambda index: None)
+    monkeypatch.setattr(wmi_pc_info_reader, "_query_physical_drive_seek_penalty", lambda index: True)
+    assert _detect_disk_type_from_physical_drive(0) == "HDD"
+    monkeypatch.setattr(wmi_pc_info_reader, "_query_physical_drive_seek_penalty", lambda index: False)
+    assert _detect_disk_type_from_physical_drive(0) == "SSD"
 
 
 def test_network_candidate_selection_prefers_ethernet_gateway_and_low_metric() -> None:
@@ -534,3 +612,23 @@ def test_network_candidate_selection_prefers_ethernet_gateway_and_low_metric() -
 
     assert selected is not None
     assert selected.ipv4_address == "192.168.0.10"
+
+
+def test_get_adapters_addresses_candidate_selection_and_mac_formatting() -> None:
+    selected = select_network_identity_candidate(
+        [
+            NetworkIdentityCandidate("100.64.0.1", "00:11:22:33:44:55", "Tailscale", IF_TYPE_ETHERNET_CSMACD, True, True, 5),
+            NetworkIdentityCandidate("192.168.0.30", "aa:bb:cc:dd:ee:ff", "Wi-Fi", 71, True, True, 1),
+            NetworkIdentityCandidate("192.168.0.20", "11-22-33-44-55-66", "Realtek Ethernet", IF_TYPE_ETHERNET_CSMACD, True, False, 1),
+            NetworkIdentityCandidate("192.168.0.10", "aa:bb:cc:dd:ee:ff", "Realtek Ethernet", IF_TYPE_ETHERNET_CSMACD, True, True, 25),
+        ]
+    )
+
+    assert selected is not None
+    assert selected.ip == "192.168.0.10"
+    assert normalize_mac_address(selected.mac) == "AA-BB-CC-DD-EE-FF"
+
+
+def test_memory_type_mapping_includes_lpddr3_code_27() -> None:
+    assert _memory_type_from_code(27) == "LPDDR3"
+    assert _memory_type_from_code(29) == "LPDDR3"

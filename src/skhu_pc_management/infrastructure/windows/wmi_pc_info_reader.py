@@ -7,6 +7,8 @@ import re
 from typing import Any
 
 from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
+from skhu_pc_management.infrastructure.windows.dxgi_gpu_reader import read_dxgi_gpu_info
+from skhu_pc_management.infrastructure.windows.network_identity_reader import normalize_mac_address, read_network_identity
 from skhu_pc_management.ports.command_runner import CommandRunner
 from skhu_pc_management.ports.registry import Registry
 
@@ -138,6 +140,10 @@ class WmiPcInfoReader:
         return _bytes_to_gb(total_bytes), common_type, max_speed, modules
 
     def _get_gpu_info(self) -> tuple[str | None, str | None, list[str]]:
+        dxgi_info = self._read_dxgi_gpu_info()
+        if dxgi_info is not None:
+            return dxgi_info
+
         candidates: list[_GpuCandidate] = []
         has_basic_display = False
         for item in self._wmi_items("Win32_VideoController"):
@@ -167,12 +173,13 @@ class WmiPcInfoReader:
 
     def _get_disks(self) -> list[DiskInfo]:
         physical_disks = self._get_physical_disks()
+        disk_type_by_index = self._get_disk_type_by_index()
         disks: list[DiskInfo] = []
         try:
             for item in self._wmi_items("Win32_DiskDrive"):
                 if _is_usb_or_removable_disk(item):
                     continue
-                disks.append(_build_disk_info(item, physical_disks))
+                disks.append(_build_disk_info(item, physical_disks, disk_type_by_index))
 
             if not disks and physical_disks:
                 for disk in physical_disks:
@@ -188,6 +195,10 @@ class WmiPcInfoReader:
         return disks
 
     def _get_network_info(self) -> tuple[str | None, str | None]:
+        network_identity = self._read_network_identity()
+        if network_identity is not None:
+            return network_identity
+
         candidates: list[_NetworkCandidate] = []
         for item in self._wmi_items("Win32_NetworkAdapterConfiguration"):
             candidate = _network_candidate_from_wmi_item(item)
@@ -196,7 +207,13 @@ class WmiPcInfoReader:
         selected = _select_network_candidate(candidates)
         if selected is None:
             return "연결된 이더넷 없음", "알 수 없음"
-        return selected.ipv4_address, selected.mac_address or "알 수 없음"
+        return selected.ipv4_address, normalize_mac_address(selected.mac_address) or "알 수 없음"
+
+    def _read_dxgi_gpu_info(self) -> tuple[str, str, list[str]] | None:
+        return read_dxgi_gpu_info()
+
+    def _read_network_identity(self) -> tuple[str, str] | None:
+        return read_network_identity()
 
     def _get_disk_type(self, disk: Any) -> str:
         return _infer_disk_type(disk, None)
@@ -214,6 +231,12 @@ class WmiPcInfoReader:
                 )
             )
         return disks
+
+    def _get_disk_type_by_index(self) -> dict[int, str]:
+        return _build_disk_type_by_index_from_storage_wmi(
+            self._wmi_items("MSFT_Disk", r"root\Microsoft\Windows\Storage"),
+            self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage"),
+        )
 
     def _get_tpm_info(self) -> tuple[bool | None, str | None]:
         item = self._first_wmi_item("Win32_Tpm", namespace=r"root\CIMV2\Security\MicrosoftTpm")
@@ -343,13 +366,20 @@ class _NetworkCandidate:
     is_up: bool = True
 
 
-def _build_disk_info(disk: Any, physical_disks: list[_PhysicalDiskMetadata]) -> DiskInfo:
+def _build_disk_info(
+    disk: Any,
+    physical_disks: list[_PhysicalDiskMetadata],
+    disk_type_by_index: dict[int, str] | None = None,
+) -> DiskInfo:
     model = _to_string(_get_value(disk, "Model")) or "Unknown"
     serial = _normalize_disk_token(_to_string(_get_value(disk, "SerialNumber")))
     size_bytes = _to_int(_get_value(disk, "Size")) or 0
     matched = _find_best_physical_disk(physical_disks, model, serial, size_bytes)
-    disk_type = _infer_disk_type(disk, matched.media_type if matched else None)
-    bus_type = _infer_bus_type(disk, model, matched.bus_type if matched else None)
+    disk_index = _resolve_disk_index(disk)
+    mapped_type = disk_type_by_index.get(disk_index) if disk_type_by_index is not None and disk_index is not None else None
+    ioctl_type = _detect_disk_type_from_physical_drive(disk_index) if not mapped_type and disk_index is not None else "Unknown"
+    disk_type = _disk_type_from_mapped_type(mapped_type) or _disk_type_from_mapped_type(ioctl_type) or _infer_disk_type(disk, matched.media_type if matched else None)
+    bus_type = _bus_type_from_mapped_type(mapped_type or ioctl_type) or _infer_bus_type(disk, model, matched.bus_type if matched else None)
     actual_size_gib = _bytes_to_gb(size_bytes)
 
     return DiskInfo(
@@ -456,6 +486,224 @@ def _is_usb_or_removable_disk(disk: Any) -> bool:
         for name in ("Model", "InterfaceType", "PNPDeviceID", "DeviceID", "MediaType")
     ).lower()
     return any(token in text for token in ("usb", "usbstor", "removable"))
+
+
+def _resolve_disk_index(disk: Any) -> int | None:
+    index = _to_int(_get_value(disk, "Index"))
+    if index is not None:
+        return index
+    device_id = _to_string(_get_value(disk, "DeviceID")) or ""
+    match = re.search(r"physicaldrive(\d+)", device_id, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _build_disk_type_by_index_from_storage_wmi(disk_rows: list[Any], physical_rows: list[Any]) -> dict[int, str]:
+    physical_by_unique_id: dict[str, Any] = {}
+    physical_list: list[Any] = []
+    for row in physical_rows:
+        unique_id = _normalize_storage_key(_to_string(_get_value(row, "UniqueId")))
+        if unique_id and unique_id not in physical_by_unique_id:
+            physical_by_unique_id[unique_id] = row
+        physical_list.append(row)
+
+    result: dict[int, str] = {}
+    for row in disk_rows:
+        index = _to_int(_get_value(row, "Number"))
+        if index is None:
+            continue
+        physical = _find_storage_physical_disk(row, physical_by_unique_id, physical_list)
+        disk_type = _classify_disk_type_from_storage_metadata(row, physical)
+        if disk_type:
+            result[index] = disk_type
+    return result
+
+
+def _find_storage_physical_disk(disk_row: Any, physical_by_unique_id: dict[str, Any], physical_list: list[Any]) -> Any | None:
+    unique_id = _normalize_storage_key(_to_string(_get_value(disk_row, "UniqueId")))
+    if unique_id and unique_id in physical_by_unique_id:
+        return physical_by_unique_id[unique_id]
+
+    disk_model = _normalize_storage_key(_to_string(_get_value(disk_row, "Model")) or _to_string(_get_value(disk_row, "FriendlyName")))
+    disk_size = _to_int(_get_value(disk_row, "Size")) or 0
+    for candidate in physical_list:
+        candidate_model = _normalize_storage_key(
+            _to_string(_get_value(candidate, "Model")) or _to_string(_get_value(candidate, "FriendlyName"))
+        )
+        candidate_size = _to_int(_get_value(candidate, "Size")) or 0
+        if disk_model and candidate_model != disk_model:
+            continue
+        if disk_size and candidate_size and disk_size != candidate_size:
+            continue
+        return candidate
+    return None
+
+
+def _classify_disk_type_from_storage_metadata(disk_row: Any, physical_row: Any | None) -> str:
+    bus_type = _to_int(_get_value(physical_row, "BusType")) if physical_row is not None else None
+    if bus_type is None:
+        bus_type = _to_int(_get_value(disk_row, "BusType"))
+    if bus_type == 17:
+        return "NVMe"
+
+    media_type = _to_int(_get_value(physical_row, "MediaType")) if physical_row is not None else None
+    if media_type == 3:
+        return "HDD"
+    if media_type in {4, 5}:
+        return "SSD"
+    return ""
+
+
+def _normalize_storage_key(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _disk_type_from_mapped_type(value: str | None) -> str | None:
+    if value == "NVMe":
+        return "SSD"
+    if value in {"SSD", "HDD"}:
+        return value
+    return None
+
+
+def _bus_type_from_mapped_type(value: str | None) -> str | None:
+    return "NVMe" if value == "NVMe" else None
+
+
+def _detect_disk_type_from_physical_drive(index: int | None) -> str:
+    if index is None or index < 0:
+        return "Unknown"
+    bus_type = _query_physical_drive_bus_type(index)
+    if bus_type == 17:
+        return "NVMe"
+    seek_penalty = _query_physical_drive_seek_penalty(index)
+    if seek_penalty is True:
+        return "HDD"
+    if seek_penalty is False:
+        return "SSD"
+    return "Unknown"
+
+
+def _query_physical_drive_bus_type(index: int) -> int | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+        StorageDeviceProperty = 0
+        PropertyStandardQuery = 0
+        GENERIC_READ = 0
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        OPEN_EXISTING = 3
+        INVALID_HANDLE_VALUE = -1
+
+        class STORAGE_PROPERTY_QUERY(ctypes.Structure):
+            _fields_ = (("PropertyId", wintypes.DWORD), ("QueryType", wintypes.DWORD), ("AdditionalParameters", ctypes.c_ubyte * 1))
+
+        class STORAGE_DESCRIPTOR_HEADER(ctypes.Structure):
+            _fields_ = (("Version", wintypes.DWORD), ("Size", wintypes.DWORD))
+
+        handle = ctypes.windll.kernel32.CreateFileW(
+            rf"\\.\PhysicalDrive{index}",
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
+        if handle == INVALID_HANDLE_VALUE:
+            return None
+        try:
+            query = STORAGE_PROPERTY_QUERY(StorageDeviceProperty, PropertyStandardQuery)
+            header = STORAGE_DESCRIPTOR_HEADER()
+            returned = wintypes.DWORD()
+            ok = ctypes.windll.kernel32.DeviceIoControl(
+                handle,
+                IOCTL_STORAGE_QUERY_PROPERTY,
+                ctypes.byref(query),
+                ctypes.sizeof(query),
+                ctypes.byref(header),
+                ctypes.sizeof(header),
+                ctypes.byref(returned),
+                None,
+            )
+            if not ok or header.Size < 28:
+                return None
+            buffer = ctypes.create_string_buffer(header.Size)
+            ok = ctypes.windll.kernel32.DeviceIoControl(
+                handle,
+                IOCTL_STORAGE_QUERY_PROPERTY,
+                ctypes.byref(query),
+                ctypes.sizeof(query),
+                buffer,
+                header.Size,
+                ctypes.byref(returned),
+                None,
+            )
+            if not ok:
+                return None
+            return int(buffer.raw[28])
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    except Exception:
+        return None
+
+
+def _query_physical_drive_seek_penalty(index: int) -> bool | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+        StorageDeviceSeekPenaltyProperty = 7
+        PropertyStandardQuery = 0
+        GENERIC_READ = 0
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        OPEN_EXISTING = 3
+        INVALID_HANDLE_VALUE = -1
+
+        class STORAGE_PROPERTY_QUERY(ctypes.Structure):
+            _fields_ = (("PropertyId", wintypes.DWORD), ("QueryType", wintypes.DWORD), ("AdditionalParameters", ctypes.c_ubyte * 1))
+
+        class DEVICE_SEEK_PENALTY_DESCRIPTOR(ctypes.Structure):
+            _fields_ = (("Version", wintypes.DWORD), ("Size", wintypes.DWORD), ("IncursSeekPenalty", wintypes.BOOL))
+
+        handle = ctypes.windll.kernel32.CreateFileW(
+            rf"\\.\PhysicalDrive{index}",
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
+        if handle == INVALID_HANDLE_VALUE:
+            return None
+        try:
+            query = STORAGE_PROPERTY_QUERY(StorageDeviceSeekPenaltyProperty, PropertyStandardQuery)
+            descriptor = DEVICE_SEEK_PENALTY_DESCRIPTOR()
+            returned = wintypes.DWORD()
+            ok = ctypes.windll.kernel32.DeviceIoControl(
+                handle,
+                IOCTL_STORAGE_QUERY_PROPERTY,
+                ctypes.byref(query),
+                ctypes.sizeof(query),
+                ctypes.byref(descriptor),
+                ctypes.sizeof(descriptor),
+                ctypes.byref(returned),
+                None,
+            )
+            if not ok:
+                return None
+            return bool(descriptor.IncursSeekPenalty)
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    except Exception:
+        return None
 
 
 def _compose_disk_type_display(disk_type: str, bus_type: str | None) -> str:
@@ -663,6 +911,7 @@ def _memory_type_from_code(code: int) -> str:
         21: "DDR2",
         24: "DDR3",
         26: "DDR4",
+        27: "LPDDR3",
         29: "LPDDR3",
         30: "LPDDR4",
         34: "DDR5",
@@ -721,12 +970,23 @@ def _select_representative_gpu(candidates: list[_GpuCandidate]) -> _GpuCandidate
 def _format_gpu_memory(candidate: _GpuCandidate | None) -> str:
     if candidate is None:
         return "알 수 없음"
-    if candidate.is_integrated and not candidate.adapter_memory_bytes:
+    if _is_suspicious_wmi_gpu_memory(candidate.name, candidate.adapter_memory_bytes):
+        return "알 수 없음"
+    if candidate.is_integrated:
         return "없음(내장그래픽)"
     if not candidate.adapter_memory_bytes:
         return "없음(내장그래픽)" if candidate.is_integrated else "알 수 없음"
     gb = max(1, round(candidate.adapter_memory_bytes / 1024**3))
     return f"{gb}GB"
+
+
+def _is_suspicious_wmi_gpu_memory(name: str, adapter_ram: int | None) -> bool:
+    if not adapter_ram:
+        return False
+    lower = name.lower()
+    if any(vendor in lower for vendor in ("nvidia", "geforce", "rtx", "gtx", "radeon", "amd")):
+        return adapter_ram <= 1024**3
+    return False
 
 
 def _unique_preserving_order(values: Any) -> list[str]:
