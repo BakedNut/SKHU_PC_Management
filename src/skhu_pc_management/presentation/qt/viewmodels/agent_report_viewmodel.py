@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from skhu_pc_management.infrastructure.logging.agent_logger import create_agent_logger
@@ -18,6 +19,9 @@ class AgentReportViewModel:
 
     status_message: str = "서버 전송 대기 중입니다."
     last_result_message: str = "-"
+    last_sent_at: str = "-"
+    last_report_id: str = "-"
+    last_match_status: str = "-"
     is_busy: bool = False
     logger: Any = None
 
@@ -49,6 +53,9 @@ class AgentReportViewModel:
             result = self._send_with_retry(report)
 
             self.status_message = "서버 전송이 완료되었습니다."
+            self.last_sent_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.last_report_id = str(result.reportId)
+            self.last_match_status = result.matchStatus
             self.last_result_message = (
                 f"reportId={result.reportId}, "
                 f"matchedPcId={result.matchedPcId}, "
