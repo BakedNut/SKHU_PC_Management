@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6.QtWidgets")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QTableWidget
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
@@ -26,7 +27,9 @@ from skhu_pc_management.presentation.qt.panels.network_panel import (
 )
 from skhu_pc_management.presentation.qt.panels.action_center_panel import (
     ActionCenterPanel,
+    _PolicyActionRow,
     _classroom_summary_value,
+    _policy_status_tone,
     _short_power_status,
     _short_shutdown_status,
 )
@@ -147,6 +150,16 @@ def test_app_qss_contains_win11_setting_badge_and_disabled_section_styles() -> N
     assert "Windows 11 선택 시 사용할 수 있습니다." not in APP_QSS
 
 
+def test_app_qss_contains_policy_action_row_and_detail_styles() -> None:
+    assert "QFrame#policyActionRow" in APP_QSS
+    assert "QLabel#policyDetail" in APP_QSS
+    assert 'QLabel#policyDetail[tone="warning"]' in APP_QSS
+    assert 'QLabel#policyDetail[tone="danger"]' in APP_QSS
+    assert "QLabel#statusBadge" in APP_QSS
+    assert "font-size: 12px;" in APP_QSS
+    assert "font-weight: 800;" in APP_QSS
+
+
 def test_app_qss_contains_info_button_role() -> None:
     assert 'QPushButton[buttonRole="info"]' in APP_QSS
     assert 'QPushButton[buttonRole="info"]:hover' in APP_QSS
@@ -233,7 +246,7 @@ def test_classroom_summary_formatter_shortens_status_text() -> None:
 def test_classroom_row_status_formatters_return_short_text() -> None:
     assert _short_power_status("전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함") == (
         "정상",
-        "화면 끄기 / 절전 / 최대 절전: 안 함",
+        "화면 끄기: 안 함 · 절전: 안 함 · 최대 절전: 안 함",
     )
     assert _short_power_status("전원 옵션 상태를 확인할 수 없습니다.") == (
         "확인 불가",
@@ -249,12 +262,24 @@ def test_classroom_row_status_formatters_return_short_text() -> None:
     )
     assert _short_shutdown_status("자동종료 스케줄 상태를 확인할 수 없습니다.") == (
         "확인 불가",
-        "자동종료 스케줄 상태 확인 필요",
+        "자동종료 스케줄 상태를 확인할 수 없습니다.",
     )
     assert _short_shutdown_status("23시 자동종료 스케줄이 등록되어 있지 않습니다.") == (
         "확인 필요",
         "자동종료 예약 작업 확인 필요",
     )
+
+
+def test_policy_status_tone_maps_status_text_to_badge_tone() -> None:
+    assert _policy_status_tone("전원 옵션이 올바르게 설정되어 있습니다.") == ("정상", "success")
+    assert _policy_status_tone("자동종료 스케줄 상태를 확인할 수 없습니다.") == ("확인 필요", "warning")
+    assert _policy_status_tone("미설정") == ("주의", "warning")
+    assert _policy_status_tone("오류") == ("오류", "danger")
+
+
+def test_policy_action_row_compact_threshold() -> None:
+    assert _PolicyActionRow.should_use_compact_layout(619)
+    assert not _PolicyActionRow.should_use_compact_layout(620)
 
 
 def test_action_center_settings_table_renders_three_columns(qt_app: QApplication) -> None:
@@ -280,8 +305,31 @@ def test_action_center_settings_table_renders_three_columns(qt_app: QApplication
     assert panel.settings_table.horizontalHeaderItem(2).text() == "상세"
     assert panel.settings_table.item(0, 1).text() == "설정됨"
     assert panel.settings_table.item(0, 2).text() == "적용 완료"
+    assert panel.power_status_label.objectName() == "statusBadge"
+    assert panel.shutdown_status_label.objectName() == "statusBadge"
     assert panel.power_status_label.text() == "정상"
+    assert panel.power_status_label.property("tone") == "success"
     assert panel.shutdown_status_label.text() == "정상"
+    assert panel.shutdown_status_label.property("tone") == "success"
+    assert panel.power_detail_label.text() == "화면 끄기: 안 함 · 절전: 안 함 · 최대 절전: 안 함"
+    assert panel.power_detail_label.objectName() == "policyDetail"
+    assert panel.shutdown_detail_label.text() == "22:55 시작, 23:00 종료 예약"
+    assert panel.shutdown_detail_label.objectName() == "policyDetail"
+    assert panel.power_apply_button.text() == "전원 옵션 '안 함' 적용"
+    assert panel.shutdown_apply_button.text() == "23시 자동종료 적용"
+    assert panel.power_apply_button.property("buttonRole") == "info"
+    assert panel.shutdown_apply_button.property("buttonRole") == "info"
+    assert panel.power_status_label.width() == 78
+    assert panel.shutdown_status_label.width() == 78
+    assert panel.power_status_label.alignment() & Qt.AlignCenter
+    assert panel.shutdown_status_label.alignment() & Qt.AlignCenter
+    assert panel.power_apply_button.minimumWidth() == 220
+    assert panel.power_apply_button.maximumWidth() == 220
+    assert panel.shutdown_apply_button.minimumWidth() == 220
+    assert panel.shutdown_apply_button.maximumWidth() == 220
+    policy_rows = panel.findChildren(_PolicyActionRow)
+    assert len(policy_rows) == 2
+    assert all(row.objectName() == "policyActionRow" for row in policy_rows)
     assert panel.office_status_label.text() == "현재 감지: Office 2024"
     assert not hasattr(panel, "office_summary")
     summary_titles = [card.title_label.text() for card in panel.findChildren(SummaryCard)]
@@ -390,7 +438,7 @@ def test_action_center_office_status_uses_detected_prefix_and_keeps_buttons_enab
 def test_action_center_summary_treats_cannot_confirm_messages_as_unknown() -> None:
     assert _short_shutdown_status("자동종료 스케줄 상태를 확인할 수 없습니다.") == (
         "확인 불가",
-        "자동종료 스케줄 상태 확인 필요",
+        "자동종료 스케줄 상태를 확인할 수 없습니다.",
     )
     assert _short_power_status("전원 옵션 상태를 확인할 수 없습니다.") == (
         "확인 불가",

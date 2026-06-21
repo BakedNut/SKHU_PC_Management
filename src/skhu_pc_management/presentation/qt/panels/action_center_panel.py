@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -357,35 +358,67 @@ class ActionCenterPanel(QWidget):
         self.shutdown_status_label = StatusBadge("미확인", "neutral")
         self.power_apply_button = info_button("전원 옵션 '안 함' 적용")
         self.shutdown_apply_button = info_button("23시 자동종료 적용")
-        self.power_apply_button.setFixedWidth(210)
-        self.shutdown_apply_button.setFixedWidth(210)
-        self.power_description_label = QLabel("화면 끄기 / 절전 / 최대 절전: 확인 필요")
+        self.power_apply_button.setFixedWidth(220)
+        self.shutdown_apply_button.setFixedWidth(220)
+        self.power_description_label = QLabel("강의실 전원 정책 상태를 확인하고 필요 시 적용합니다.")
         self.power_description_label.setObjectName("mutedText")
         self.power_description_label.setWordWrap(True)
-        self.shutdown_description_label = QLabel("자동종료 스케줄 상태 확인 필요")
+        self.power_detail_label = QLabel("전원 옵션 상태 확인 필요")
+        self.power_detail_label.setObjectName("policyDetail")
+        self.power_detail_label.setWordWrap(True)
+        self.shutdown_description_label = QLabel("매일 22:55에 종료 예약 작업을 등록합니다.")
         self.shutdown_description_label.setObjectName("mutedText")
         self.shutdown_description_label.setWordWrap(True)
+        self.shutdown_detail_label = QLabel("자동종료 스케줄 상태 확인 필요")
+        self.shutdown_detail_label.setObjectName("policyDetail")
+        self.shutdown_detail_label.setWordWrap(True)
         card.body_layout.addWidget(
-            self._action_row(
+            self._classroom_policy_row(
                 "전원 옵션",
-                "강의실 전원 정책 상태를 확인하고 필요 시 적용합니다.",
+                self.power_description_label,
+                self.power_detail_label,
+                self.power_status_label,
                 self.power_apply_button,
-                option_widget=self.power_description_label,
-                status_widget=self.power_status_label,
             )
         )
         card.body_layout.addWidget(
-            self._action_row(
+            self._classroom_policy_row(
                 "23시 자동종료",
-                "강의실 자동종료 예약 상태를 확인하고 필요 시 적용합니다.",
+                self.shutdown_description_label,
+                self.shutdown_detail_label,
+                self.shutdown_status_label,
                 self.shutdown_apply_button,
-                option_widget=self.shutdown_description_label,
-                status_widget=self.shutdown_status_label,
             )
         )
         self.power_apply_button.clicked.connect(lambda: self._run_maintenance("set_power_never"))
         self.shutdown_apply_button.clicked.connect(lambda: self._run_maintenance("set_auto_shutdown_at_23"))
         return card
+
+    def _classroom_policy_row(
+        self,
+        title: str,
+        description_label: QLabel,
+        detail_label: QLabel,
+        status_label: StatusBadge,
+        action_button: QPushButton,
+    ) -> QWidget:
+        status_label.setObjectName("statusBadge")
+        status_label.setFixedWidth(78)
+        status_label.setAlignment(Qt.AlignCenter)
+
+        text_container = QWidget()
+        text_container.setObjectName("transparentContainer")
+        text_container.setMinimumWidth(260)
+        text_column = QVBoxLayout()
+        text_column.setContentsMargins(0, 0, 0, 0)
+        text_column.setSpacing(4)
+        title_label = QLabel(title)
+        title_label.setObjectName("actionTitle")
+        text_column.addWidget(title_label)
+        text_column.addWidget(description_label)
+        text_column.addWidget(detail_label)
+        text_container.setLayout(text_column)
+        return _PolicyActionRow(status_label, text_container, action_button)
 
     def _action_row(
         self,
@@ -563,16 +596,18 @@ class ActionCenterPanel(QWidget):
         self.classroom_summary.setToolTip(
             f"전원: {self._pc_check.power_option_status_text}\n자동 종료: {self._pc_check.auto_shutdown_status_text}"
         )
-        power_status, power_description = _short_power_status(self._pc_check.power_option_status_text)
-        shutdown_status, shutdown_description = _short_shutdown_status(self._pc_check.auto_shutdown_status_text)
-        self.power_status_label.set_status(power_status)
+        _, power_detail = _short_power_status(self._pc_check.power_option_status_text)
+        _, shutdown_detail = _short_shutdown_status(self._pc_check.auto_shutdown_status_text)
+        power_badge_text, power_tone = _policy_status_tone(self._pc_check.power_option_status_text)
+        shutdown_badge_text, shutdown_tone = _policy_status_tone(self._pc_check.auto_shutdown_status_text)
+        self.power_status_label.set_status(power_badge_text, power_tone)
         self.power_status_label.setToolTip(self._pc_check.power_option_status_text)
-        self.shutdown_status_label.set_status(shutdown_status)
+        self.shutdown_status_label.set_status(shutdown_badge_text, shutdown_tone)
         self.shutdown_status_label.setToolTip(self._pc_check.auto_shutdown_status_text)
-        self.power_description_label.setText(power_description)
-        self.power_description_label.setToolTip(self._pc_check.power_option_status_text)
-        self.shutdown_description_label.setText(shutdown_description)
-        self.shutdown_description_label.setToolTip(self._pc_check.auto_shutdown_status_text)
+        _set_policy_detail(self.power_detail_label, power_detail, power_tone)
+        self.power_detail_label.setToolTip(self._pc_check.power_option_status_text)
+        _set_policy_detail(self.shutdown_detail_label, shutdown_detail, shutdown_tone)
+        self.shutdown_detail_label.setToolTip(self._pc_check.auto_shutdown_status_text)
         self.office_status_label.setText(office_text)
 
     def _launch_program(self, program_id: str) -> None:
@@ -649,6 +684,54 @@ class ActionCenterPanel(QWidget):
             button.setToolTip(TEST_MODE_DISABLED_MESSAGE)
 
 
+class _PolicyActionRow(QFrame):
+    _COMPACT_WIDTH = 620
+
+    def __init__(self, status_badge: QLabel, text_widget: QWidget, action_button: QPushButton) -> None:
+        super().__init__()
+        self.setObjectName("policyActionRow")
+        self._status_badge = status_badge
+        self._text_widget = text_widget
+        self._action_button = action_button
+        self._compact = False
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(14, 12, 14, 12)
+        self._grid.setHorizontalSpacing(12)
+        self._grid.setVerticalSpacing(8)
+        self._apply_layout(compact=False)
+
+    @property
+    def is_compact(self) -> bool:
+        return self._compact
+
+    @classmethod
+    def should_use_compact_layout(cls, width: int) -> bool:
+        return width < cls._COMPACT_WIDTH
+
+    def resizeEvent(self, event: object) -> None:  # noqa: N802
+        self._apply_layout(self.should_use_compact_layout(self.width()))
+        super().resizeEvent(event)
+
+    def _apply_layout(self, compact: bool) -> None:
+        if compact == self._compact and self._grid.indexOf(self._status_badge) != -1:
+            return
+        self._compact = compact
+        if compact:
+            self._grid.addWidget(self._status_badge, 0, 0, Qt.AlignTop)
+            self._grid.addWidget(self._text_widget, 0, 1)
+            self._grid.addWidget(self._action_button, 1, 1, Qt.AlignRight)
+            self._grid.setColumnStretch(0, 0)
+            self._grid.setColumnStretch(1, 1)
+            self._grid.setColumnStretch(2, 0)
+        else:
+            self._grid.addWidget(self._status_badge, 0, 0, Qt.AlignTop)
+            self._grid.addWidget(self._text_widget, 0, 1)
+            self._grid.addWidget(self._action_button, 0, 2, Qt.AlignVCenter)
+            self._grid.setColumnStretch(0, 0)
+            self._grid.setColumnStretch(1, 1)
+            self._grid.setColumnStretch(2, 0)
+
+
 def _option_column(*widgets: QWidget) -> QWidget:
     container = QWidget()
     container.setObjectName("transparentContainer")
@@ -694,7 +777,7 @@ def _classroom_summary_value(power_text: str, shutdown_text: str) -> tuple[str, 
 def _short_power_status(text: str) -> tuple[str, str]:
     status = _short_policy_status(text, normal_tokens=("올바르게", "모두 비활성화", "안 함", "정상"))
     if status == "정상":
-        return status, "화면 끄기 / 절전 / 최대 절전: 안 함"
+        return status, "화면 끄기: 안 함 · 절전: 안 함 · 최대 절전: 안 함"
     if status == "확인 불가":
         return status, "전원 옵션 상태 확인 필요"
     return status, "전원 옵션 설정 확인 필요"
@@ -705,8 +788,40 @@ def _short_shutdown_status(text: str) -> tuple[str, str]:
     if status == "정상":
         return status, "22:55 시작, 23:00 종료 예약"
     if status == "확인 불가":
-        return status, "자동종료 스케줄 상태 확인 필요"
+        return status, "자동종료 스케줄 상태를 확인할 수 없습니다."
     return status, "자동종료 예약 작업 확인 필요"
+
+
+def _policy_status_tone(text: str) -> tuple[str, str]:
+    if _contains_any(text, ("오류", "실패")):
+        return "오류", "danger"
+    if _contains_any(
+        text,
+        (
+            "확인 불가",
+            "읽을 수 없음",
+            "알 수 없음",
+            "미확인",
+            "확인할 수 없습니다",
+            "확인할 수 없음",
+            "조회 실패",
+            "읽기 실패",
+            "상태를 확인할 수",
+        ),
+    ):
+        return "확인 필요", "warning"
+    if _contains_any(text, ("미설정", "필요", "주의", "등록되어 있지", "올바르지", "활성화됨")):
+        return "주의", "warning"
+    if _contains_any(text, ("정상", "올바르게 설정", "설정되어 있습니다", "정상 등록", "안 함")):
+        return "정상", "success"
+    return "확인 필요", "warning"
+
+
+def _set_policy_detail(label: QLabel, text: str, tone: str) -> None:
+    label.setText(text)
+    label.setProperty("tone", tone)
+    repolish(label)
+    label.update()
 
 
 def _short_policy_status(text: str, normal_tokens: tuple[str, ...]) -> str:

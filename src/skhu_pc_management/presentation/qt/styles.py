@@ -68,6 +68,11 @@ QFrame#actionRow {
     border: 1px solid #EEF0F3;
     border-radius: 10px;
 }
+QFrame#policyActionRow {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+}
 QFrame#summaryCard {
     background: #FFFFFF;
 }
@@ -216,15 +221,30 @@ QLabel#sectionDisabledHint {
 QFrame#settingsSection[state="disabled"] QLabel#sectionDisabledHint {
     color: #64748B;
 }
+QLabel#policyDetail {
+    color: #334155;
+    font-weight: 600;
+}
+QLabel#policyDetail[tone="warning"] {
+    color: #B45309;
+}
+QLabel#policyDetail[tone="danger"] {
+    color: #DC2626;
+}
+QLabel#policyDetail[tone="success"] {
+    color: #334155;
+}
 QLabel#statusBadge {
-    border-radius: 999px;
+    border-radius: 10px;
     padding: 4px 10px;
-    font-weight: 650;
+    font-size: 12px;
+    font-weight: 800;
+    min-height: 20px;
 }
 QLabel#statusBadge[tone="neutral"] {
-    background: #F3F4F6;
-    color: #4B5563;
-    border: 1px solid #E5E7EB;
+    background: #F8FAFC;
+    color: #64748B;
+    border: 1px solid #E2E8F0;
 }
 QLabel#statusBadge[tone="info"] {
     background: #EFF6FF;
@@ -233,12 +253,12 @@ QLabel#statusBadge[tone="info"] {
 }
 QLabel#statusBadge[tone="success"] {
     background: #ECFDF5;
-    color: #16A34A;
-    border: 1px solid #BBF7D0;
+    color: #047857;
+    border: 1px solid #A7F3D0;
 }
 QLabel#statusBadge[tone="warning"] {
     background: #FFFBEB;
-    color: #D97706;
+    color: #B45309;
     border: 1px solid #FDE68A;
 }
 QLabel#statusBadge[tone="danger"] {
