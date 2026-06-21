@@ -47,6 +47,22 @@ QFrame#sectionCard {
     border: 1px solid #EEF0F3;
     border-radius: 10px;
 }
+QFrame#settingsSection {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+}
+QFrame#settingsSection[state="active"] {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+}
+QFrame#settingsSection[state="disabled"] {
+    background: #F8FAFC;
+    border: 1px solid #E5E7EB;
+}
+QFrame#settingsSection[state="disabled"] QLabel {
+    color: #94A3B8;
+}
 QFrame#actionRow {
     background: #FFFFFF;
     border: 1px solid #EEF0F3;
@@ -173,6 +189,32 @@ QLabel#inlineHint {
     border: 0;
     padding: 2px 0;
     color: #4B5563;
+}
+QLabel#settingBadge {
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    color: #1D4ED8;
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 12px;
+    font-weight: 700;
+    min-height: 18px;
+}
+QLabel#settingBadge[tone="info"] {
+    background: #EFF6FF;
+    border-color: #BFDBFE;
+    color: #1D4ED8;
+}
+QLabel#sectionDisabledHint {
+    background: #F1F5F9;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    color: #64748B;
+    padding: 8px 10px;
+    font-weight: 600;
+}
+QFrame#settingsSection[state="disabled"] QLabel#sectionDisabledHint {
+    color: #64748B;
 }
 QLabel#statusBadge {
     border-radius: 999px;

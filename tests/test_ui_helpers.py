@@ -135,6 +135,18 @@ def test_app_qss_contains_header_badge_pill_styles() -> None:
     assert "padding: 8px 14px;" in APP_QSS
 
 
+def test_app_qss_contains_win11_setting_badge_and_disabled_section_styles() -> None:
+    assert "QLabel#settingBadge" in APP_QSS
+    assert 'QLabel#settingBadge[tone="info"]' in APP_QSS
+    assert "QFrame#settingsSection" in APP_QSS
+    assert 'QFrame#settingsSection[state="active"]' in APP_QSS
+    assert 'QFrame#settingsSection[state="disabled"]' in APP_QSS
+    assert "QLabel#sectionDisabledHint" in APP_QSS
+    assert "border: 1px solid transparent;" not in APP_QSS
+    assert APP_QSS.count("border: 1px solid #E5E7EB;") >= 3
+    assert "Windows 11 선택 시 사용할 수 있습니다." not in APP_QSS
+
+
 def test_app_qss_contains_info_button_role() -> None:
     assert 'QPushButton[buttonRole="info"]' in APP_QSS
     assert 'QPushButton[buttonRole="info"]:hover' in APP_QSS
@@ -274,6 +286,34 @@ def test_action_center_settings_table_renders_three_columns(qt_app: QApplication
     assert not hasattr(panel, "office_summary")
     summary_titles = [card.title_label.text() for card in panel.findChildren(SummaryCard)]
     assert summary_titles == ["설정 상태", "PC 점검", "강의실 정책"]
+
+
+def test_action_center_win11_only_start_menu_section_tracks_windows_selection(qt_app: QApplication) -> None:
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation())
+
+    badges = [label for label in panel.findChildren(QLabel) if label.text() == "Win11 전용"]
+    assert badges
+    assert all(badge.objectName() == "settingBadge" for badge in badges)
+    assert all(badge.property("tone") == "info" for badge in badges)
+    assert panel.start_menu_section.objectName() == "settingsSection"
+    assert panel.start_menu_section.property("state") == "active"
+    assert panel.start_menu_unavailable_label.isHidden()
+    assert panel._win11_setting_rows
+    assert all(not row.isHidden() for row in panel._win11_setting_rows)
+
+    panel.win10_radio.setChecked(True)
+
+    assert panel.start_menu_section.property("state") == "disabled"
+    assert not panel.start_menu_unavailable_label.isHidden()
+    assert panel.start_menu_unavailable_label.text() == "Windows 11 선택 시 사용할 수 있습니다."
+    assert all(row.isHidden() for row in panel._win11_setting_rows)
+    assert all(not checkbox.isChecked() for checkbox in panel._win11_only_checkboxes)
+
+    panel.win11_radio.setChecked(True)
+
+    assert panel.start_menu_section.property("state") == "active"
+    assert panel.start_menu_unavailable_label.isHidden()
+    assert all(not row.isHidden() for row in panel._win11_setting_rows)
 
 
 def test_action_center_test_mode_disables_program_launch_buttons(qt_app: QApplication) -> None:

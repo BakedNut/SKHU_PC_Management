@@ -28,6 +28,7 @@ from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge
 from skhu_pc_management.presentation.qt.widgets.buttons import (
     info_button,
     primary_button,
+    repolish,
     set_button_role,
     subtle_button,
 )
@@ -103,6 +104,8 @@ class ActionCenterPanel(QWidget):
         self._test_mode = test_mode
         self._checkboxes: dict[str, QCheckBox] = {}
         self._win11_only_checkboxes: list[QCheckBox] = []
+        self._win11_setting_rows: list[QWidget] = []
+        self._win11_badges: list[QLabel] = []
         self._danger_buttons: list[QPushButton] = []
         self._launch_buttons: list[QPushButton] = []
 
@@ -253,6 +256,15 @@ class ActionCenterPanel(QWidget):
 
         for title, options in SETTING_SECTIONS:
             section = SectionCard(title)
+            is_start_menu_section = title == "시작 메뉴"
+            if is_start_menu_section:
+                self.start_menu_section = section
+                self.start_menu_section.setObjectName("settingsSection")
+                self.start_menu_section.setProperty("state", "active")
+                self.start_menu_unavailable_label = QLabel("Windows 11 선택 시 사용할 수 있습니다.")
+                self.start_menu_unavailable_label.setObjectName("sectionDisabledHint")
+                self.start_menu_unavailable_label.setWordWrap(True)
+                self.start_menu_unavailable_label.setVisible(False)
             grid = QGridLayout()
             grid.setHorizontalSpacing(14)
             grid.setVerticalSpacing(8)
@@ -266,7 +278,10 @@ class ActionCenterPanel(QWidget):
                     checkbox.toggled.connect(self._update_selected_count)
                 if option.win11_only:
                     self._win11_only_checkboxes.append(checkbox)
-                    badge = StatusBadge("Win11 전용", "info")
+                    badge = QLabel("Win11 전용")
+                    badge.setObjectName("settingBadge")
+                    badge.setProperty("tone", "info")
+                    self._win11_badges.append(badge)
                     row.addWidget(checkbox)
                     row.addWidget(badge)
                 else:
@@ -274,8 +289,12 @@ class ActionCenterPanel(QWidget):
                 row.addStretch()
                 container = QWidget()
                 container.setLayout(row)
+                if option.win11_only:
+                    self._win11_setting_rows.append(container)
                 grid.addWidget(container, index // 2, index % 2)
             section.body_layout.addLayout(grid)
+            if is_start_menu_section:
+                section.body_layout.addWidget(self.start_menu_unavailable_label)
             card.body_layout.addWidget(section)
 
         self.select_all_button.clicked.connect(self._select_all)
@@ -518,11 +537,19 @@ class ActionCenterPanel(QWidget):
 
     def _sync_win11_only_state(self) -> None:
         is_win11 = self.win11_radio.isChecked()
+        if hasattr(self, "start_menu_section"):
+            self.start_menu_section.setProperty("state", "active" if is_win11 else "disabled")
+            repolish(self.start_menu_section)
+            self.start_menu_section.update()
+        if hasattr(self, "start_menu_unavailable_label"):
+            self.start_menu_unavailable_label.setVisible(not is_win11)
         for checkbox in self._win11_only_checkboxes:
             checkbox.setEnabled(is_win11 and not self._test_mode)
             checkbox.setToolTip("" if is_win11 else "Windows 11 전용 설정입니다.")
             if not is_win11:
                 checkbox.setChecked(False)
+        for row in self._win11_setting_rows:
+            row.setVisible(is_win11)
 
     def _sync_status_summaries(self) -> None:
         self.settings_summary.set_value(self._settings.summary_text, tone=_settings_summary_tone(self._settings))
