@@ -58,6 +58,13 @@ def test_default_setting_definitions_are_loaded() -> None:
     assert "win11_hide_recommended_files" in setting_ids
 
 
+def test_disable_password_expiration_label_and_id_are_kept() -> None:
+    definition = next(definition for definition in DEFAULT_SETTING_DEFINITIONS if definition.setting_id == "disable_password_expiration")
+
+    assert definition.setting_id == "disable_password_expiration"
+    assert definition.name == "사용자 계정 암호 만료 비활성화"
+
+
 def test_applies_only_selected_setting_ids() -> None:
     registry = FakeRegistry()
     command_runner = FakeCommandRunner()

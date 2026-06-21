@@ -51,7 +51,33 @@ class WindowsSystemSettingsOperator:
 
     def disable_password_expiration_for_all_users(self) -> None:
         self.command_runner.run(("net", "accounts", "/maxpwage:unlimited"))
-        script = "Get-LocalUser | Where-Object {$_.Enabled -eq $true} | Set-LocalUser -PasswordNeverExpires $true"
+        script = """
+$ErrorActionPreference = 'Stop'
+$enabledUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object { $_.Enabled -eq $true })
+
+if ($enabledUsers.Count -eq 0) {
+    throw "활성화된 로컬 사용자 계정을 찾을 수 없습니다."
+}
+
+foreach ($user in $enabledUsers) {
+    Set-LocalUser -Name $user.Name -PasswordNeverExpires $true -ErrorAction Stop
+}
+
+$failedUsers = @(
+    Get-LocalUser -ErrorAction Stop |
+    Where-Object { $_.Enabled -eq $true -and $_.PasswordNeverExpires -ne $true } |
+    Select-Object -ExpandProperty Name
+)
+
+if ($failedUsers.Count -gt 0) {
+    throw ("암호 만료 비활성화 적용 실패 사용자: " + ($failedUsers -join ", "))
+}
+
+[PSCustomObject]@{
+    EnabledUserCount = $enabledUsers.Count
+    FailedUsers = $failedUsers
+} | ConvertTo-Json -Depth 3
+""".strip()
         self.command_runner.run(("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script))
 
 
