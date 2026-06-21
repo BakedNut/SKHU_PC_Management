@@ -7,8 +7,16 @@ from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo, Lo
 from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
 from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import (
     _PhysicalDiskMetadata,
+    _GpuCandidate,
+    _NetworkCandidate,
     _build_disk_info,
+    _disk_type_summaries,
     _format_rated_size,
+    _format_gpu_memory,
+    _is_usb_or_removable_disk,
+    _normalize_os_caption,
+    _select_network_candidate,
+    _select_representative_gpu,
     WmiPcInfoReader,
 )
 
@@ -34,15 +42,25 @@ class WmiItem:
     SMBIOSMemoryType: str | None = None
     MemoryType: str | None = None
     AdapterCompatibility: str | None = None
+    AdapterRAM: str | None = None
     Model: str | None = None
     Size: str | None = None
     SerialNumber: str | None = None
     MediaRotationRate: str | None = None
     MediaType: Any | None = None
     InterfaceType: str | None = None
+    PNPDeviceID: str | None = None
+    DeviceID: str | None = None
+    Index: str | None = None
     FriendlyName: str | None = None
     BusType: Any | None = None
     SpecVersion: str | None = None
+    IPEnabled: Any | None = None
+    Description: str | None = None
+    IPAddress: Any | None = None
+    DefaultIPGateway: Any | None = None
+    MACAddress: str | None = None
+    IPConnectionMetric: Any | None = None
 
 
 class FakeRegistry:
@@ -175,13 +193,27 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
             ("Win32_PhysicalMemory", None): [
                 WmiItem(Capacity=str(16 * 1024**3), Speed="3200", SMBIOSMemoryType="26")
             ],
-            ("Win32_VideoController", None): [WmiItem(Name="NVIDIA RTX", AdapterCompatibility="NVIDIA")],
+            ("Win32_VideoController", None): [
+                WmiItem(Name="Microsoft Basic Display Adapter", AdapterCompatibility="Microsoft"),
+                WmiItem(Name="NVIDIA RTX", AdapterCompatibility="NVIDIA", AdapterRAM=str(8 * 1024**3)),
+            ],
             ("Win32_DiskDrive", None): [
                 WmiItem(
                     Model="Samsung NVMe SSD",
                     Size=str(512 * 1024**3),
                     MediaRotationRate="0",
                     InterfaceType="SCSI",
+                )
+            ],
+            ("Win32_NetworkAdapterConfiguration", None): [
+                WmiItem(
+                    IPEnabled=True,
+                    Caption="Realtek Ethernet",
+                    Description="Realtek Gaming 2.5GbE Family Controller",
+                    IPAddress=["192.168.0.10"],
+                    DefaultIPGateway=["192.168.0.1"],
+                    MACAddress="AA-BB-CC-DD-EE-FF",
+                    IPConnectionMetric="25",
                 )
             ],
             ("Win32_Tpm", r"root\CIMV2\Security\MicrosoftTpm"): [WmiItem(SpecVersion="2.0, 1.3")],
@@ -191,14 +223,20 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
 
     pc_info = reader.read()
 
-    assert pc_info.os_name == "Microsoft Windows 11 Pro"
+    assert pc_info.os_name == "Windows 11 Pro"
     assert pc_info.windows_build == "26100"
     assert pc_info.windows_ubr == "3323"
     assert pc_info.windows_release == "24H2"
     assert pc_info.cpu_name == "Intel Core"
     assert pc_info.memory_gb == 16.0
     assert pc_info.memory_modules[0].memory_type == "DDR4"
+    assert pc_info.gpu_name == "NVIDIA RTX"
+    assert pc_info.gpu_memory == "8GB"
     assert pc_info.gpu_names == ["NVIDIA RTX"]
+    assert pc_info.ipv4_address == "192.168.0.10"
+    assert pc_info.mac_address == "AA-BB-CC-DD-EE-FF"
+    assert pc_info.disk_nvme_summary == "1개(512GB x1)"
+    assert pc_info.disk_ssd_summary == "없음"
     assert pc_info.disks == [
         DiskInfo(
             model="Samsung NVMe SSD",
@@ -232,7 +270,7 @@ def test_wmi_reader_returns_unknowns_when_values_are_missing() -> None:
 
     pc_info = reader.read()
 
-    assert pc_info.os_name == "Unknown"
+    assert pc_info.os_name == "알 수 없음(운영체제 캡션 없음)"
     assert pc_info.cpu_name == "Unknown"
     assert pc_info.memory_gb is None
     assert pc_info.gpu_names == []
@@ -420,3 +458,79 @@ def test_wmi_reader_falls_back_to_win32_diskdrive_when_msft_physical_disk_is_mis
 
     assert disk.display_type == "HDD (SATA)"
     assert disk.rated_size == "1TB"
+
+
+def test_os_caption_normalization_removes_vendor_and_trademark_noise() -> None:
+    assert _normalize_os_caption("Microsoft Windows 11 Pro") == "Windows 11 Pro"
+    assert _normalize_os_caption("Microsoft Windows(R) 10 Pro") == "Windows 10 Pro"
+    assert _normalize_os_caption("Microsoft Windows™ 11 Education") == "Windows 11 Education"
+    assert _normalize_os_caption("") == "알 수 없음(운영체제 캡션 없음)"
+    assert _normalize_os_caption(None) == "알 수 없음(운영체제 캡션 없음)"
+
+
+def test_gpu_candidate_selection_prefers_larger_dedicated_memory() -> None:
+    selected = _select_representative_gpu(
+        [
+            _GpuCandidate("Intel UHD Graphics", adapter_memory_bytes=128 * 1024**2, is_integrated=True),
+            _GpuCandidate("NVIDIA RTX", adapter_memory_bytes=8 * 1024**3),
+        ]
+    )
+
+    assert selected is not None
+    assert selected.name == "NVIDIA RTX"
+    assert _format_gpu_memory(selected) == "8GB"
+    assert _format_gpu_memory(_GpuCandidate("Intel UHD Graphics", is_integrated=True)) == "없음(내장그래픽)"
+
+
+def test_disk_helpers_exclude_usb_and_group_capacity_summaries() -> None:
+    assert _is_usb_or_removable_disk(WmiItem(Model="USB Disk", InterfaceType="USB", PNPDeviceID="USBSTOR\\Disk")) is True
+    assert _is_usb_or_removable_disk(WmiItem(Model="Samsung NVMe SSD", InterfaceType="SCSI")) is False
+
+    summaries = _disk_type_summaries(
+        [
+            DiskInfo(model="NVMe 1", disk_type="SSD", bus_type="NVMe", display_type="SSD (NVMe)", rated_size="1TB"),
+            DiskInfo(model="NVMe 2", disk_type="SSD", bus_type="NVMe", display_type="SSD (NVMe)", rated_size="512GB"),
+            DiskInfo(model="SATA SSD", disk_type="SSD", bus_type="SATA", display_type="SSD (SATA)", rated_size="256GB"),
+            DiskInfo(model="HDD", disk_type="HDD", bus_type="SATA", display_type="HDD (SATA)", rated_size="512GB"),
+            DiskInfo(model="Unknown", disk_type="Unknown", display_type="알 수 없음", rated_size=None),
+        ]
+    )
+
+    assert summaries["NVMe"] == "2개(1TB x1, 512GB x1)"
+    assert summaries["SSD"] == "1개(256GB x1)"
+    assert summaries["HDD"] == "1개(512GB x1)"
+    assert summaries["Unknown"] == "1개(알 수 없음 x1)"
+
+
+def test_network_candidate_selection_prefers_ethernet_gateway_and_low_metric() -> None:
+    candidates = [
+        _NetworkCandidate(
+            name="Wi-Fi",
+            description="Wi-Fi",
+            ipv4_address="192.168.0.20",
+            has_gateway=True,
+            metric=10,
+            is_ethernet=False,
+        ),
+        _NetworkCandidate(
+            name="Ethernet",
+            description="Realtek",
+            ipv4_address="192.168.0.10",
+            has_gateway=True,
+            metric=25,
+            is_ethernet=True,
+        ),
+        _NetworkCandidate(
+            name="Ethernet 2",
+            description="Realtek",
+            ipv4_address="192.168.0.11",
+            has_gateway=False,
+            metric=5,
+            is_ethernet=True,
+        ),
+    ]
+
+    selected = _select_network_candidate(candidates)
+
+    assert selected is not None
+    assert selected.ipv4_address == "192.168.0.10"

@@ -49,8 +49,16 @@ class PcInfo:
     memory_modules: list[MemoryModuleInfo] = field(default_factory=list)
     memory_type: str = "Unknown"
     memory_speed_mhz: int | None = None
+    gpu_name: str | None = None
+    gpu_memory: str | None = None
     gpu_names: list[str] = field(default_factory=list)
     disks: list[DiskInfo] = field(default_factory=list)
+    ipv4_address: str | None = None
+    mac_address: str | None = None
+    disk_nvme_summary: str = "없음"
+    disk_ssd_summary: str = "없음"
+    disk_hdd_summary: str = "없음"
+    disk_unknown_summary: str = "없음"
     tpm_installed: bool | None = None
     tpm_version: str | None = None
     secure_boot_enabled: bool | None = None

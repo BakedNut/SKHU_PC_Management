@@ -55,6 +55,13 @@ class PcInfoPanel(QWidget):
         self.cpu = ReadOnlyField()
         self.ram = ReadOnlyField()
         self.gpu = ReadOnlyField()
+        self.gpu_memory = ReadOnlyField()
+        self.ipv4_address = ReadOnlyField()
+        self.mac_address = ReadOnlyField()
+        self.disk_nvme_summary = ReadOnlyField("없음")
+        self.disk_ssd_summary = ReadOnlyField("없음")
+        self.disk_hdd_summary = ReadOnlyField("없음")
+        self.disk_unknown_summary = ReadOnlyField("없음")
         self.tpm_version = StatusValueField("알 수 없음", "neutral")
         self.tpm_status = StatusValueField("알 수 없음", "neutral")
         self.secure_boot = StatusValueField("알 수 없음", "neutral")
@@ -121,6 +128,7 @@ class PcInfoPanel(QWidget):
         right = QVBoxLayout()
         right.setSpacing(14)
         right.addWidget(self._pc_actions_card())
+        right.addWidget(self._network_card())
         right.addWidget(self._security_card())
         right.addStretch()
         body.addLayout(left, 3)
@@ -143,6 +151,7 @@ class PcInfoPanel(QWidget):
         form.add_field("CPU", self.cpu)
         form.add_field("RAM", self.ram)
         form.add_field("GPU", self.gpu)
+        form.add_field("GPU 메모리", self.gpu_memory)
         card.body_layout.addWidget(form)
         return card
 
@@ -155,7 +164,21 @@ class PcInfoPanel(QWidget):
 
     def _disk_card(self) -> QWidget:
         card = Card("디스크 정보")
+        summary = FormGrid(columns=2)
+        summary.add_field("NVMe", self.disk_nvme_summary)
+        summary.add_field("SSD", self.disk_ssd_summary)
+        summary.add_field("HDD", self.disk_hdd_summary)
+        summary.add_field("알 수 없음", self.disk_unknown_summary)
+        card.body_layout.addWidget(summary)
         card.body_layout.addWidget(self.disk_table)
+        return card
+
+    def _network_card(self) -> QWidget:
+        card = Card("네트워크 정보")
+        form = FormGrid(columns=1)
+        form.add_field("IPv4 주소", self.ipv4_address)
+        form.add_field("MAC 주소", self.mac_address)
+        card.body_layout.addWidget(form)
         return card
 
     def _security_card(self) -> QWidget:
@@ -233,6 +256,13 @@ class PcInfoPanel(QWidget):
         self.cpu.setText(self._view_model.cpu)
         self.ram.setText(self._view_model.ram)
         self.gpu.setText(self._view_model.gpu)
+        self.gpu_memory.setText(self._view_model.gpu_memory)
+        self.ipv4_address.setText(self._view_model.ipv4_address)
+        self.mac_address.setText(self._view_model.mac_address)
+        self.disk_nvme_summary.setText(self._view_model.disk_nvme_summary)
+        self.disk_ssd_summary.setText(self._view_model.disk_ssd_summary)
+        self.disk_hdd_summary.setText(self._view_model.disk_hdd_summary)
+        self.disk_unknown_summary.setText(self._view_model.disk_unknown_summary)
         self.tpm_version.set_status(self._view_model.tpm_version, "neutral")
         self.tpm_status.set_status(self._view_model.tpm_status_text)
         self.secure_boot.set_status(self._view_model.secure_boot_status_text)
@@ -249,6 +279,13 @@ class PcInfoPanel(QWidget):
             self.cpu,
             self.ram,
             self.gpu,
+            self.gpu_memory,
+            self.ipv4_address,
+            self.mac_address,
+            self.disk_nvme_summary,
+            self.disk_ssd_summary,
+            self.disk_hdd_summary,
+            self.disk_unknown_summary,
             self.tpm_version,
         ):
             field.setToolTip(field.text())

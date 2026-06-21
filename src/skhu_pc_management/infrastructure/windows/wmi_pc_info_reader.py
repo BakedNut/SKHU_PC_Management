@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import getpass
 import socket
 from dataclasses import dataclass
+import getpass
+import re
 from typing import Any
 
 from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
@@ -20,6 +21,10 @@ class WmiPcInfoReader:
         memory_total_gb, memory_type, memory_speed_mhz, memory_modules = self._get_memory_info()
         tpm_installed, tpm_version = self._get_tpm_info()
         secure_boot_enabled, secure_boot_status = self._get_secure_boot_info()
+        gpu_name, gpu_memory, gpu_names = self._get_gpu_info()
+        disks = self._get_disks()
+        disk_summaries = _disk_type_summaries(disks)
+        ipv4_address, mac_address = self._get_network_info()
 
         return PcInfo(
             computer_name=self._get_computer_name(),
@@ -34,8 +39,16 @@ class WmiPcInfoReader:
             memory_modules=memory_modules,
             memory_type=memory_type,
             memory_speed_mhz=memory_speed_mhz,
-            gpu_names=self._get_gpu_names(),
-            disks=self._get_disks(),
+            gpu_name=gpu_name,
+            gpu_memory=gpu_memory,
+            gpu_names=gpu_names,
+            disks=disks,
+            ipv4_address=ipv4_address,
+            mac_address=mac_address,
+            disk_nvme_summary=disk_summaries["NVMe"],
+            disk_ssd_summary=disk_summaries["SSD"],
+            disk_hdd_summary=disk_summaries["HDD"],
+            disk_unknown_summary=disk_summaries["Unknown"],
             tpm_installed=tpm_installed,
             tpm_version=tpm_version,
             secure_boot_enabled=secure_boot_enabled,
@@ -45,10 +58,13 @@ class WmiPcInfoReader:
 
     @staticmethod
     def _get_computer_name() -> str:
-        return socket.gethostname() or "Unknown"
+        return _get_windows_computer_name() or socket.gethostname() or "Unknown"
 
     @staticmethod
     def _get_user_name() -> str:
+        user_name = _get_windows_user_name()
+        if user_name:
+            return user_name
         try:
             return getpass.getuser() or "Unknown"
         except Exception:
@@ -56,10 +72,11 @@ class WmiPcInfoReader:
 
     def _get_windows_version_info(self) -> dict[str, str | None]:
         os_item = self._first_wmi_item("Win32_OperatingSystem")
-        caption = _to_string(_get_value(os_item, "Caption")) or "Unknown"
+        raw_caption = _to_string(_get_value(os_item, "Caption"))
+        caption = _normalize_os_caption(raw_caption)
         build = _to_string(_get_value(os_item, "BuildNumber"))
         architecture = _to_string(_get_value(os_item, "OSArchitecture"))
-        release = _windows_release(caption, build)
+        release = _windows_release(raw_caption or caption, build)
         ubr = self._get_windows_ubr()
         return {
             "caption": caption,
@@ -120,22 +137,41 @@ class WmiPcInfoReader:
 
         return _bytes_to_gb(total_bytes), common_type, max_speed, modules
 
-    def _get_gpu_names(self) -> list[str]:
-        gpu_names: list[str] = []
+    def _get_gpu_info(self) -> tuple[str | None, str | None, list[str]]:
+        candidates: list[_GpuCandidate] = []
+        has_basic_display = False
         for item in self._wmi_items("Win32_VideoController"):
             name = _to_string(_get_value(item, "Name")) or "Unknown GPU"
             adapter_compatibility = _to_string(_get_value(item, "AdapterCompatibility")) or ""
+            adapter_ram = _to_int(_get_value(item, "AdapterRAM"))
+            if _is_basic_display_adapter(name):
+                has_basic_display = True
+                continue
             if _is_virtual_gpu(name, adapter_compatibility):
                 continue
-            if name not in gpu_names:
-                gpu_names.append(name)
-        return gpu_names
+            candidates.append(
+                _GpuCandidate(
+                    name=name,
+                    adapter_memory_bytes=adapter_ram,
+                    is_integrated=_is_integrated_gpu(name, adapter_ram),
+                )
+            )
+
+        selected = _select_representative_gpu(candidates)
+        gpu_names = _unique_preserving_order(candidate.name for candidate in candidates)
+        if selected is not None:
+            return selected.name, _format_gpu_memory(selected), gpu_names
+        if has_basic_display:
+            return "드라이버 없음", "알 수 없음", ["드라이버 없음"]
+        return None, None, gpu_names
 
     def _get_disks(self) -> list[DiskInfo]:
         physical_disks = self._get_physical_disks()
         disks: list[DiskInfo] = []
         try:
             for item in self._wmi_items("Win32_DiskDrive"):
+                if _is_usb_or_removable_disk(item):
+                    continue
                 disks.append(_build_disk_info(item, physical_disks))
 
             if not disks and physical_disks:
@@ -150,6 +186,17 @@ class WmiPcInfoReader:
                 )
             )
         return disks
+
+    def _get_network_info(self) -> tuple[str | None, str | None]:
+        candidates: list[_NetworkCandidate] = []
+        for item in self._wmi_items("Win32_NetworkAdapterConfiguration"):
+            candidate = _network_candidate_from_wmi_item(item)
+            if candidate is not None:
+                candidates.append(candidate)
+        selected = _select_network_candidate(candidates)
+        if selected is None:
+            return "연결된 이더넷 없음", "알 수 없음"
+        return selected.ipv4_address, selected.mac_address or "알 수 없음"
 
     def _get_disk_type(self, disk: Any) -> str:
         return _infer_disk_type(disk, None)
@@ -277,6 +324,25 @@ class _PhysicalDiskMetadata:
     size_bytes: int = 0
 
 
+@dataclass(frozen=True)
+class _GpuCandidate:
+    name: str
+    adapter_memory_bytes: int | None = None
+    is_integrated: bool = False
+
+
+@dataclass(frozen=True)
+class _NetworkCandidate:
+    name: str
+    description: str
+    ipv4_address: str
+    mac_address: str | None = None
+    has_gateway: bool = False
+    metric: int | None = None
+    is_ethernet: bool = False
+    is_up: bool = True
+
+
 def _build_disk_info(disk: Any, physical_disks: list[_PhysicalDiskMetadata]) -> DiskInfo:
     model = _to_string(_get_value(disk, "Model")) or "Unknown"
     serial = _normalize_disk_token(_to_string(_get_value(disk, "SerialNumber")))
@@ -384,6 +450,14 @@ def _infer_bus_type(disk: Any, model: str, physical_bus_type: str | None) -> str
     return "Unknown"
 
 
+def _is_usb_or_removable_disk(disk: Any) -> bool:
+    text = " ".join(
+        _to_string(_get_value(disk, name)) or ""
+        for name in ("Model", "InterfaceType", "PNPDeviceID", "DeviceID", "MediaType")
+    ).lower()
+    return any(token in text for token in ("usb", "usbstor", "removable"))
+
+
 def _compose_disk_type_display(disk_type: str, bus_type: str | None) -> str:
     normalized_type = disk_type or "Unknown"
     if normalized_type == "Unknown":
@@ -408,6 +482,45 @@ def _format_rated_size(size_bytes: int | None) -> str | None:
     if rated_gib >= 1024 and rated_gib % 1024 == 0:
         return f"{rated_gib // 1024}TB"
     return f"{rated_gib}GB"
+
+
+def _disk_type_summaries(disks: list[DiskInfo]) -> dict[str, str]:
+    buckets: dict[str, list[str]] = {"NVMe": [], "SSD": [], "HDD": [], "Unknown": []}
+    for disk in disks:
+        category = _disk_summary_category(disk)
+        buckets[category].append(disk.rated_size or "알 수 없음")
+    return {key: _summarize_capacity_bucket(values) for key, values in buckets.items()}
+
+
+def _disk_summary_category(disk: DiskInfo) -> str:
+    bus_type = (disk.bus_type or "").lower()
+    display_type = (disk.display_type or "").lower()
+    disk_type = (disk.disk_type or "").upper()
+    if "nvme" in bus_type or "nvme" in display_type:
+        return "NVMe"
+    if disk_type == "SSD":
+        return "SSD"
+    if disk_type == "HDD":
+        return "HDD"
+    return "Unknown"
+
+
+def _summarize_capacity_bucket(values: list[str]) -> str:
+    if not values:
+        return "없음"
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    parts = [f"{size} x{count}" for size, count in sorted(counts.items(), key=lambda item: _capacity_sort_key(item[0]), reverse=True)]
+    return f"{len(values)}개({', '.join(parts)})"
+
+
+def _capacity_sort_key(value: str) -> int:
+    match = re.fullmatch(r"(\d+)(GB|TB)", value)
+    if not match:
+        return 0
+    amount = int(match.group(1))
+    return amount * (1024 if match.group(2) == "TB" else 1)
 
 
 def _normalize_disk_token(value: str | None) -> str:
@@ -532,6 +645,18 @@ def _windows_release(caption: str, build_text: str | None) -> str | None:
     return None
 
 
+def _normalize_os_caption(caption: str | None) -> str:
+    text = (caption or "").strip()
+    if not text:
+        return "알 수 없음(운영체제 캡션 없음)"
+    if text.lower().startswith("microsoft "):
+        text = text[len("Microsoft ") :]
+    for token in ("(R)", "(r)", "(TM)", "(tm)", "®", "™"):
+        text = text.replace(token, "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or "알 수 없음(운영체제 캡션 없음)"
+
+
 def _memory_type_from_code(code: int) -> str:
     return {
         20: "DDR",
@@ -547,7 +672,22 @@ def _memory_type_from_code(code: int) -> str:
 
 def _is_virtual_gpu(name: str, adapter_compatibility: str) -> bool:
     lower_name = name.lower()
-    if any(token in lower_name for token in ("parsec", "virtual", "remote", "basic render driver", "citrix", "vmware", "hyper-v", "radmin")):
+    if any(
+        token in lower_name
+        for token in (
+            "parsec",
+            "virtual",
+            "remote",
+            "basic render driver",
+            "citrix",
+            "vmware",
+            "virtualbox",
+            "hyper-v",
+            "radmin",
+            "rdp",
+            "software adapter",
+        )
+    ):
         return True
 
     compatibility = adapter_compatibility.lower()
@@ -557,3 +697,157 @@ def _is_virtual_gpu(name: str, adapter_compatibility: str) -> bool:
         and "amd" not in lower_name
         and "intel" not in lower_name
     )
+
+
+def _is_basic_display_adapter(name: str) -> bool:
+    lower = name.lower()
+    return any(token in lower for token in ("microsoft basic display adapter", "microsoft 기본 디스플레이 어댑터", "기본 디스플레이 어댑터"))
+
+
+def _is_integrated_gpu(name: str, adapter_memory_bytes: int | None) -> bool:
+    lower = name.lower()
+    if any(token in lower for token in ("intel", "iris", "uhd graphics", "radeon graphics")):
+        if not adapter_memory_bytes or adapter_memory_bytes <= 512 * 1024**2:
+            return True
+    return False
+
+
+def _select_representative_gpu(candidates: list[_GpuCandidate]) -> _GpuCandidate | None:
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda candidate: candidate.adapter_memory_bytes or 0, reverse=True)[0]
+
+
+def _format_gpu_memory(candidate: _GpuCandidate | None) -> str:
+    if candidate is None:
+        return "알 수 없음"
+    if candidate.is_integrated and not candidate.adapter_memory_bytes:
+        return "없음(내장그래픽)"
+    if not candidate.adapter_memory_bytes:
+        return "없음(내장그래픽)" if candidate.is_integrated else "알 수 없음"
+    gb = max(1, round(candidate.adapter_memory_bytes / 1024**3))
+    return f"{gb}GB"
+
+
+def _unique_preserving_order(values: Any) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _network_candidate_from_wmi_item(item: Any) -> _NetworkCandidate | None:
+    ip_enabled = _to_string(_get_value(item, "IPEnabled"))
+    if ip_enabled and ip_enabled.lower() == "false":
+        return None
+    name = _to_string(_get_value(item, "Caption")) or _to_string(_get_value(item, "Description")) or ""
+    description = _to_string(_get_value(item, "Description")) or name
+    text = f"{name} {description}"
+    if _is_excluded_network_adapter(text):
+        return None
+    ipv4_addresses = [value for value in _to_string_list(_get_value(item, "IPAddress")) if _is_ipv4_address(value)]
+    if not ipv4_addresses:
+        return None
+    gateways = [value for value in _to_string_list(_get_value(item, "DefaultIPGateway")) if _is_ipv4_address(value)]
+    mac_address = _to_string(_get_value(item, "MACAddress"))
+    metric = _to_int(_get_value(item, "IPConnectionMetric"))
+    return _NetworkCandidate(
+        name=name,
+        description=description,
+        ipv4_address=ipv4_addresses[0],
+        mac_address=mac_address,
+        has_gateway=bool(gateways),
+        metric=metric,
+        is_ethernet=_looks_like_ethernet(text),
+    )
+
+
+def _select_network_candidate(candidates: list[_NetworkCandidate]) -> _NetworkCandidate | None:
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            not candidate.is_ethernet,
+            not candidate.has_gateway,
+            candidate.metric if candidate.metric not in (None, 0) else 2**31 - 1,
+        ),
+    )[0]
+
+
+def _is_excluded_network_adapter(text: str) -> bool:
+    lower = text.lower()
+    return any(
+        token in lower
+        for token in (
+            "tailscale",
+            "wireguard",
+            "vpn",
+            "tunnel",
+            "virtual",
+            "vethernet",
+            "hyper-v",
+            "vmware",
+            "virtualbox",
+            "loopback",
+            "tap-",
+            "tap windows",
+        )
+    )
+
+
+def _looks_like_ethernet(text: str) -> bool:
+    lower = text.lower()
+    return any(token in lower for token in ("ethernet", "이더넷", "realtek", "gbe", "2.5gbe", "lan"))
+
+
+def _is_ipv4_address(value: str) -> bool:
+    parts = value.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(part) <= 255 for part in parts)
+    except ValueError:
+        return False
+
+
+def _to_string_list(value: Any | None) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    try:
+        return [str(item).strip() for item in value if str(item).strip()]
+    except TypeError:
+        text = str(value).strip()
+        return [text] if text else []
+
+
+def _get_windows_computer_name() -> str | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        ComputerNameNetBIOS = 0
+        size = wintypes.DWORD(256)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if ctypes.windll.kernel32.GetComputerNameExW(ComputerNameNetBIOS, buffer, ctypes.byref(size)):
+            return buffer.value.strip() or None
+    except Exception:
+        return None
+    return None
+
+
+def _get_windows_user_name() -> str | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        size = wintypes.DWORD(256)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if ctypes.windll.advapi32.GetUserNameW(buffer, ctypes.byref(size)):
+            return buffer.value.strip("\x00").strip() or None
+    except Exception:
+        return None
+    return None

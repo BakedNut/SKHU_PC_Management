@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import Counter
 from typing import Any
 
 
@@ -17,7 +18,14 @@ class PcInfoViewModel:
     cpu: str = "알 수 없음"
     ram: str = "알 수 없음"
     gpu: str = "알 수 없음"
+    gpu_memory: str = "알 수 없음"
     disks: list[tuple[str, str, str, str]] = field(default_factory=list)
+    ipv4_address: str = "알 수 없음"
+    mac_address: str = "알 수 없음"
+    disk_nvme_summary: str = "없음"
+    disk_ssd_summary: str = "없음"
+    disk_hdd_summary: str = "없음"
+    disk_unknown_summary: str = "없음"
     tpm_version: str = "알 수 없음"
     tpm_status_text: str = "알 수 없음"
     secure_boot_status_text: str = "알 수 없음"
@@ -44,8 +52,17 @@ class PcInfoViewModel:
             )
             self.cpu = _display_text(pc_info.cpu_name)
             self.ram = _format_ram(pc_info)
-            self.gpu = "\n".join(pc_info.gpu_names) if pc_info.gpu_names else "알 수 없음"
+            self.gpu = _display_text(getattr(pc_info, "gpu_name", None)) if getattr(pc_info, "gpu_name", None) else (
+                "\n".join(pc_info.gpu_names) if pc_info.gpu_names else "알 수 없음"
+            )
+            self.gpu_memory = _display_text(getattr(pc_info, "gpu_memory", None))
             self.disks = _disk_rows(pc_info.disks)
+            self.ipv4_address = _display_text(getattr(pc_info, "ipv4_address", None))
+            self.mac_address = _display_text(getattr(pc_info, "mac_address", None))
+            self.disk_nvme_summary = _display_text(getattr(pc_info, "disk_nvme_summary", None)) or "없음"
+            self.disk_ssd_summary = _display_text(getattr(pc_info, "disk_ssd_summary", None)) or "없음"
+            self.disk_hdd_summary = _display_text(getattr(pc_info, "disk_hdd_summary", None)) or "없음"
+            self.disk_unknown_summary = _display_text(getattr(pc_info, "disk_unknown_summary", None)) or "없음"
             self.tpm_version = _display_text(pc_info.tpm_version)
             self.tpm_status_text = _format_tpm(pc_info)
             self.secure_boot_status_text = _display_text(pc_info.secure_boot_status)
@@ -57,7 +74,10 @@ class PcInfoViewModel:
                 ("CPU", self.cpu),
                 ("RAM", self.ram),
                 ("GPU", self.gpu),
+                ("GPU 메모리", self.gpu_memory),
                 ("디스크", _format_disks(pc_info.disks)),
+                ("IPv4 주소", self.ipv4_address),
+                ("MAC 주소", self.mac_address),
                 ("TPM", self.tpm_status_text),
                 ("Secure Boot", self.secure_boot_status_text),
                 ("Boot Mode", self.boot_mode),
@@ -130,15 +150,41 @@ def _normalize_architecture(value: str) -> str:
 
 
 def _format_ram(pc_info: Any) -> str:
-    base = "알 수 없음" if pc_info.memory_gb is None else f"{pc_info.memory_gb:g} GB"
+    base = "알 수 없음" if pc_info.memory_gb is None else f"{pc_info.memory_gb:g}GB"
+    module_summary = _format_memory_modules(getattr(pc_info, "memory_modules", []))
+    if module_summary:
+        return f"{base} ({len(pc_info.memory_modules)}개: {module_summary})"
+
     details = []
     if pc_info.memory_type != "Unknown":
         details.append(pc_info.memory_type)
     if pc_info.memory_speed_mhz:
-        details.append(f"{pc_info.memory_speed_mhz} MHz")
-    if pc_info.memory_modules:
-        details.append(f"{len(pc_info.memory_modules)} slots")
+        details.append(f"{pc_info.memory_speed_mhz}MHz")
     return base if not details else f"{base} ({', '.join(details)})"
+
+
+def _format_memory_modules(modules: list[Any]) -> str:
+    groups: Counter[tuple[str, int | None, float | None]] = Counter()
+    for module in modules:
+        capacity = getattr(module, "capacity_gb", None)
+        memory_type = getattr(module, "memory_type", "Unknown")
+        speed = getattr(module, "speed_mhz", None)
+        if capacity is None:
+            continue
+        groups[(memory_type if memory_type != "Unknown" else "", speed, capacity)] += 1
+    if not groups:
+        return ""
+
+    parts: list[str] = []
+    for (memory_type, speed, capacity), count in groups.items():
+        prefix = memory_type
+        if memory_type and speed:
+            prefix = f"{memory_type}-{speed}"
+        elif speed:
+            prefix = f"{speed}MHz"
+        capacity_text = f"{capacity:g}GB"
+        parts.append(f"{prefix + ' ' if prefix else ''}{capacity_text} x{count}")
+    return ", ".join(parts)
 
 
 def _display_windows_summary(version: str, detail: str) -> str:
