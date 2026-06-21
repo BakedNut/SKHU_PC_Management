@@ -12,9 +12,9 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .env
-secrets/product_keys.py
 src/skhu_pc_management/infrastructure/license/local_product_keys.py
 *.pem
 *.pfx
 *.key
 .test_deps/
+.idea/
