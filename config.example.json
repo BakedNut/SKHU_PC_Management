@@ -4,5 +4,6 @@
   "timeoutSeconds": 10,
   "autoSendOnStartup": false,
   "maxRetryCount": 3,
-  "retryDelaySeconds": 5
+  "retryDelaySeconds": 5,
+  "workerTokenPath": "worker-token.txt"
 }

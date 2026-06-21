@@ -6,6 +6,7 @@ import requests
 
 from skhu_pc_management.domain.agent.models import AgentReport, AgentReportResult
 from skhu_pc_management.infrastructure.config.agent_config_loader import AgentConfig
+from skhu_pc_management.infrastructure.config.worker_token_loader import load_worker_token
 from skhu_pc_management.ports.agent_report_client import AgentReportClient
 
 
@@ -19,10 +20,7 @@ class HttpAgentReportClient(AgentReportClient):
         response = requests.post(
             url,
             json=_to_payload(report),
-            headers={
-                "X-Agent-Api-Key": self._config.agent_api_key,
-                "Content-Type": "application/json",
-            },
+            headers=self._build_headers(),
             timeout=self._config.timeout_seconds,
         )
         response.raise_for_status()
@@ -36,6 +34,19 @@ class HttpAgentReportClient(AgentReportClient):
             matchStatus=str(data["matchStatus"]),
             identityEventCreated=bool(data["identityEventCreated"]),
         )
+
+    def _build_headers(self) -> dict[str, str]:
+        headers = {
+            "X-Agent-Api-Key": self._config.agent_api_key,
+            "Content-Type": "application/json",
+        }
+
+        worker_token = load_worker_token(self._config)
+
+        if worker_token is not None:
+            headers["X-Worker-Token"] = worker_token
+
+        return headers
 
 
 def _to_payload(report: AgentReport) -> dict[str, Any]:

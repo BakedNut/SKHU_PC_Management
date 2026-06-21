@@ -12,6 +12,7 @@ class AgentConfig:
     auto_send_on_startup: bool = False
     max_retry_count: int = 3
     retry_delay_seconds: int = 5
+    worker_token_path: str | None = None
 
 
 def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
@@ -32,7 +33,17 @@ def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
         auto_send_on_startup=bool(data.get("autoSendOnStartup", False)),
         max_retry_count=max(1, int(data.get("maxRetryCount", 3))),
         retry_delay_seconds=max(0, int(data.get("retryDelaySeconds", 5))),
+        worker_token_path=_normalize_optional_text(data.get("workerTokenPath")),
     )
+
+
+def resolve_runtime_path(path: str | Path) -> Path:
+    requested_path = Path(path)
+
+    if requested_path.is_absolute():
+        return requested_path
+
+    return _runtime_dir() / requested_path
 
 
 def _resolve_config_path(path: str | Path) -> Path:
@@ -58,3 +69,11 @@ def _runtime_dir() -> Path:
         return Path(sys.executable).resolve().parent
 
     return Path.cwd()
+
+
+def _normalize_optional_text(value: object | None) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    return text or None
