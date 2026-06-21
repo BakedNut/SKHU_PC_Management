@@ -317,8 +317,8 @@ def test_action_center_settings_table_renders_three_columns(qt_app: QApplication
     assert panel.shutdown_detail_label.objectName() == "policyDetail"
     assert panel.power_apply_button.text() == "전원 옵션 '안 함' 적용"
     assert panel.shutdown_apply_button.text() == "23시 자동종료 적용"
-    assert panel.power_apply_button.property("buttonRole") == "info"
-    assert panel.shutdown_apply_button.property("buttonRole") == "info"
+    assert panel.power_apply_button.property("buttonRole") == "primary"
+    assert panel.shutdown_apply_button.property("buttonRole") == "primary"
     assert panel.power_status_label.width() == 78
     assert panel.shutdown_status_label.width() == 78
     assert panel.power_status_label.alignment() & Qt.AlignCenter
@@ -411,8 +411,6 @@ def test_action_center_quick_tool_button_roles(qt_app: QApplication) -> None:
         "Edge 실행",
         "팟플레이어 실행",
         "반디집 실행",
-        "전원 옵션 '안 함' 적용",
-        "23시 자동종료 적용",
     ):
         assert buttons[label].property("buttonRole") == "info"
 
@@ -420,6 +418,8 @@ def test_action_center_quick_tool_button_roles(qt_app: QApplication) -> None:
         "선택한 설정 적용",
         "복사 및 인증 창 열기",
         "복사 및 Excel 실행",
+        "전원 옵션 '안 함' 적용",
+        "23시 자동종료 적용",
     ):
         assert buttons[label].property("buttonRole") == "primary"
 
