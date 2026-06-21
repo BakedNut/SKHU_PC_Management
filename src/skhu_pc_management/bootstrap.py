@@ -9,12 +9,13 @@ from skhu_pc_management.application.use_cases.activate_windows import ActivateWi
 from skhu_pc_management.application.use_cases.apply_settings import ApplySettings
 from skhu_pc_management.application.use_cases.apply_static_ip import ApplyStaticIp
 from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
+from skhu_pc_management.application.use_cases.build_agent_report import BuildAgentReport
 from skhu_pc_management.application.use_cases.check_settings_status import CheckSettingsStatus
-from skhu_pc_management.application.use_cases.list_network_adapters import ListNetworkAdapters
 from skhu_pc_management.application.use_cases.launch_program import LaunchProgram
+from skhu_pc_management.application.use_cases.list_network_adapters import ListNetworkAdapters
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo
 from skhu_pc_management.application.use_cases.rename_pc import RenamePc
-from skhu_pc_management.application.use_cases.run_pc_maintenance import RunPcMaintenance
+from skhu_pc_management.presentation.qt.viewmodels.agent_report_viewmodel import AgentReportViewModel
 from skhu_pc_management.application.use_cases.run_pc_checks import (
     AutoShutdownScheduleCheck,
     BrowserHistoryCheck,
@@ -24,12 +25,16 @@ from skhu_pc_management.application.use_cases.run_pc_checks import (
     RecycleBinCheck,
     RunPcChecks,
 )
+from skhu_pc_management.application.use_cases.run_pc_maintenance import RunPcMaintenance
+from skhu_pc_management.application.use_cases.send_agent_report import SendAgentReport
 from skhu_pc_management.application.use_cases.set_dhcp import SetDhcp
 from skhu_pc_management.application.use_cases.system_settings_actions import SystemSettingsActions
 from skhu_pc_management.application.use_cases.validate_taskbar_resources import ValidateTaskbarResources
+from skhu_pc_management.infrastructure.config.agent_config_loader import AgentConfig, load_agent_config
+from skhu_pc_management.infrastructure.http.agent_report_client import HttpAgentReportClient
 from skhu_pc_management.infrastructure.license.embedded_product_key_provider import EmbeddedProductKeyProvider
-from skhu_pc_management.infrastructure.windows.browser_data_reader import WindowsBrowserDataReader
 from skhu_pc_management.infrastructure.windows.auto_shutdown_cancel_shortcut import WindowsAutoShutdownCancelShortcut
+from skhu_pc_management.infrastructure.windows.browser_data_reader import WindowsBrowserDataReader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import WindowsInstalledProgramReader
 from skhu_pc_management.infrastructure.windows.latest_version_provider import WindowsLatestVersionProvider
 from skhu_pc_management.infrastructure.windows.netsh_network_configurator import NetshNetworkConfigurator
@@ -85,6 +90,8 @@ class InfrastructureContainer:
     scheduled_task_reader: WindowsScheduledTaskReader
     recycle_bin_reader: WindowsRecycleBinReader
     admin_privilege_checker: WindowsAdminPrivilegeChecker
+    agent_config: AgentConfig | None
+    agent_report_client: HttpAgentReportClient | None
 
 
 @dataclass(frozen=True)
@@ -104,6 +111,8 @@ class UseCaseContainer:
     run_pc_checks: RunPcChecks
     activate_windows: ActivateWindows
     activate_office: ActivateOffice
+    build_agent_report: BuildAgentReport
+    send_agent_report: SendAgentReport | None
 
 
 @dataclass(frozen=True)
@@ -113,6 +122,7 @@ class ViewModelContainer:
     network: NetworkViewModel
     pc_check: PcCheckViewModel
     activation: ActivationViewModel
+    agent_report: AgentReportViewModel
 
 
 def is_test_mode_enabled() -> bool:
@@ -138,6 +148,8 @@ def create_infrastructure() -> InfrastructureContainer:
     system_maintenance = WindowsSystemMaintenance(command_runner, auto_shutdown_cancel_shortcut)
     system_settings_operator = WindowsSystemSettingsOperator(registry, command_runner)
     installed_program_reader = WindowsInstalledProgramReader(registry)
+    agent_config = _load_agent_config_safely()
+    agent_report_client = HttpAgentReportClient(agent_config) if agent_config is not None else None
 
     return InfrastructureContainer(
         registry=registry,
@@ -160,6 +172,8 @@ def create_infrastructure() -> InfrastructureContainer:
         scheduled_task_reader=WindowsScheduledTaskReader(command_runner),
         recycle_bin_reader=WindowsRecycleBinReader(),
         admin_privilege_checker=WindowsAdminPrivilegeChecker(),
+        agent_config=agent_config,
+        agent_report_client=agent_report_client,
     )
 
 
@@ -176,6 +190,13 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
     )
     apply_taskbar_layout = ApplyTaskbarLayout(infra.taskbar_configurator, safety_guard=safety_guard)
     system_settings_actions = SystemSettingsActions(infra.system_settings_operator, safety_guard=safety_guard)
+
+    build_agent_report = BuildAgentReport()
+    send_agent_report = (
+        SendAgentReport(infra.agent_report_client)
+        if infra.agent_report_client is not None
+        else None
+    )
 
     return UseCaseContainer(
         load_pc_info=LoadPcInfo(WmiPcInfoReader(registry=infra.registry, command_runner=infra.command_runner)),
@@ -209,6 +230,8 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
             infra.process_launcher,
             safety_guard=safety_guard,
         ),
+        build_agent_report=build_agent_report,
+        send_agent_report=send_agent_report,
     )
 
 
@@ -228,6 +251,13 @@ def create_view_models(use_cases: UseCaseContainer) -> ViewModelContainer:
         ),
         pc_check=PcCheckViewModel(use_cases.run_pc_checks),
         activation=ActivationViewModel(use_cases.activate_windows, use_cases.activate_office),
+        agent_report=AgentReportViewModel(
+            use_cases.load_pc_info,
+            use_cases.list_network_adapters,
+            use_cases.run_pc_checks,
+            use_cases.build_agent_report,
+            use_cases.send_agent_report,
+        ),
     )
 
 
@@ -259,6 +289,7 @@ def create_main_window() -> MainWindow:
         startup_coordinator=startup_coordinator,
         resource_resolver=infra.resource_resolver,
         test_mode=test_mode,
+        agent_report_view_model=view_models.agent_report,
     )
 
 
@@ -303,3 +334,10 @@ def _create_pc_checks(infra: InfrastructureContainer) -> list[object]:
         ),
         OfficeInstallCheck(infra.installed_program_reader),
     ]
+
+
+def _load_agent_config_safely() -> AgentConfig | None:
+    try:
+        return load_agent_config()
+    except FileNotFoundError:
+        return None
