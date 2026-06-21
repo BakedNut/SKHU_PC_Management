@@ -20,12 +20,19 @@ def _hidden_subprocess_kwargs() -> dict[str, Any]:
 
 class SubprocessCommandRunner:
     def run(self, command: Sequence[str]) -> str:
-        completed = subprocess.run(
-            list(command),
-            check=True,
-            capture_output=True,
-            text=True,
-            shell=False,
-            **_hidden_subprocess_kwargs(),
-        )
-        return completed.stdout.strip()
+        try:
+            completed = subprocess.run(
+                list(command),
+                check=True,
+                capture_output=True,
+                text=True,
+                shell=False,
+                **_hidden_subprocess_kwargs(),
+            )
+        except subprocess.CalledProcessError as exc:
+            stdout = (exc.stdout or "").strip()
+            stderr = (exc.stderr or "").strip()
+            detail = stderr or stdout or f"Command failed with exit code {exc.returncode}."
+            raise RuntimeError(detail) from exc
+
+        return (completed.stdout or "").strip()

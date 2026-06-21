@@ -54,3 +54,63 @@ def test_subprocess_command_runner_passes_hidden_kwargs_and_captures_stdout(monk
     startupinfo = calls[0]["startupinfo"]
     assert startupinfo.dwFlags & subprocess.STARTF_USESHOWWINDOW
     assert startupinfo.wShowWindow == subprocess.SW_HIDE
+
+
+def test_subprocess_command_runner_returns_empty_when_stdout_is_none(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        return SimpleNamespace(stdout=None)
+
+    monkeypatch.setattr(subprocess_command_runner.subprocess, "run", fake_run)
+
+    assert SubprocessCommandRunner().run(("netsh", "test")) == ""
+
+
+def test_subprocess_command_runner_strips_stdout(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        return SimpleNamespace(stdout=" ok\n")
+
+    monkeypatch.setattr(subprocess_command_runner.subprocess, "run", fake_run)
+
+    assert SubprocessCommandRunner().run(("netsh", "test")) == "ok"
+
+
+def test_subprocess_command_runner_raises_runtime_error_from_stderr(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, output="", stderr="관리자 권한이 필요합니다.\n")
+
+    monkeypatch.setattr(subprocess_command_runner.subprocess, "run", fake_run)
+
+    try:
+        SubprocessCommandRunner().run(("netsh", "test"))
+    except RuntimeError as exc:
+        assert str(exc) == "관리자 권한이 필요합니다."
+    else:
+        raise AssertionError("RuntimeError was not raised")
+
+
+def test_subprocess_command_runner_raises_runtime_error_from_stdout_when_stderr_is_empty(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, output="netsh failed\n", stderr="")
+
+    monkeypatch.setattr(subprocess_command_runner.subprocess, "run", fake_run)
+
+    try:
+        SubprocessCommandRunner().run(("netsh", "test"))
+    except RuntimeError as exc:
+        assert str(exc) == "netsh failed"
+    else:
+        raise AssertionError("RuntimeError was not raised")
+
+
+def test_subprocess_command_runner_raises_exit_code_message_when_output_is_none(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        raise subprocess.CalledProcessError(7, command, output=None, stderr=None)
+
+    monkeypatch.setattr(subprocess_command_runner.subprocess, "run", fake_run)
+
+    try:
+        SubprocessCommandRunner().run(("netsh", "test"))
+    except RuntimeError as exc:
+        assert str(exc) == "Command failed with exit code 7."
+    else:
+        raise AssertionError("RuntimeError was not raised")

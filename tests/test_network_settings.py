@@ -218,6 +218,47 @@ def test_netsh_configurator_builds_static_ip_commands_with_dns() -> None:
     assert result.commands == tuple(command_runner.commands)
 
 
+def test_netsh_configurator_returns_clear_command_failure_message() -> None:
+    class FailingRunner:
+        def run(self, command: Sequence[str]) -> str:
+            raise RuntimeError("관리자 권한이 필요합니다.")
+
+    configurator = NetshNetworkConfigurator(FailingRunner())
+    config = StaticIpConfig(
+        adapter_name="Ethernet",
+        ip_address="192.168.0.10",
+        subnet_mask="255.255.255.0",
+        gateway="192.168.0.1",
+        dns1="8.8.8.8",
+        dns2="1.1.1.1",
+    )
+
+    result = configurator.apply_static_ip(config)
+
+    assert result.success is False
+    assert "관리자 권한" in result.message
+    assert "'NoneType' object has no attribute 'strip'" not in result.message
+
+
+def test_netsh_configurator_uses_fallback_when_failure_message_is_empty() -> None:
+    class EmptyMessageFailingRunner:
+        def run(self, command: Sequence[str]) -> str:
+            raise RuntimeError("")
+
+    configurator = NetshNetworkConfigurator(EmptyMessageFailingRunner())
+    config = StaticIpConfig(
+        adapter_name="Ethernet",
+        ip_address="192.168.0.10",
+        subnet_mask="255.255.255.0",
+        gateway="192.168.0.1",
+    )
+
+    result = configurator.apply_static_ip(config)
+
+    assert result.success is False
+    assert result.message == "명령 실행에 실패했습니다."
+
+
 def test_netsh_configurator_sets_dns_to_dhcp_when_dns1_is_missing() -> None:
     command_runner = FakeCommandRunner()
     configurator = NetshNetworkConfigurator(command_runner)

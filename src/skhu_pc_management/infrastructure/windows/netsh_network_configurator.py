@@ -158,11 +158,12 @@ class NetshNetworkConfigurator:
                 self.command_runner.run(command)
                 executed.append(command)
         except Exception as exc:
+            message = str(exc).strip() or "명령 실행에 실패했습니다."
             return NetworkConfigResult(
                 operation=operation,
                 success=False,
                 adapter_name=adapter_name,
-                message=str(exc),
+                message=message,
                 commands=tuple(executed),
             )
 
