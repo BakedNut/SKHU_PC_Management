@@ -1,4 +1,5 @@
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +13,7 @@ class AgentConfig:
 
 
 def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
-    config_path = Path(path)
+    config_path = _resolve_config_path(path)
 
     if not config_path.exists():
         raise FileNotFoundError(
@@ -28,3 +29,28 @@ def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
         timeout_seconds=int(data.get("timeoutSeconds", 10)),
         auto_send_on_startup=bool(data.get("autoSendOnStartup", False)),
     )
+
+
+def _resolve_config_path(path: str | Path) -> Path:
+    requested_path = Path(path)
+
+    if requested_path.is_absolute():
+        return requested_path
+
+    candidates = [
+        _runtime_dir() / requested_path,
+        Path.cwd() / requested_path,
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return candidates[0]
+
+
+def _runtime_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path.cwd()

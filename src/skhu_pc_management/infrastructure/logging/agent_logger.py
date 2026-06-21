@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
 def create_agent_logger() -> logging.Logger:
-    logs_dir = Path("logs")
+    logs_dir = _runtime_dir() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger("skhu_pc_management.agent")
@@ -23,10 +24,16 @@ def create_agent_logger() -> logging.Logger:
         encoding="utf-8",
     )
     handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(message)s"
-        )
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     )
 
     logger.addHandler(handler)
+
     return logger
+
+
+def _runtime_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path.cwd()
