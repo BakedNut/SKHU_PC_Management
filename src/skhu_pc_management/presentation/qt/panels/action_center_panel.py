@@ -109,6 +109,8 @@ class ActionCenterPanel(QWidget):
         self._win11_badges: list[QLabel] = []
         self._danger_buttons: list[QPushButton] = []
         self._launch_buttons: list[QPushButton] = []
+        self._last_detected_windows_text: str | None = None
+        self._last_detected_office_text: str | None = None
 
         self.refresh_status_button = primary_button("상태 새로고침")
         self.settings_summary = SummaryCard("설정 상태", "상태 확인 필요")
@@ -498,6 +500,7 @@ class ActionCenterPanel(QWidget):
 
     def set_detected_windows_text(self, value: str) -> None:
         self.detected_windows_label.setText(f"현재 감지: {value or '알 수 없음'}")
+        self._apply_detected_windows_selection(value)
 
     def _selected_setting_ids(self) -> list[str]:
         return [setting_id for setting_id, checkbox in self._checkboxes.items() if checkbox.isChecked()]
@@ -568,6 +571,39 @@ class ActionCenterPanel(QWidget):
     def _on_office_version_changed(self) -> None:
         self._activation.selected_office_version = "2021" if self.office2021_radio.isChecked() else "2024"
 
+    def _apply_detected_windows_selection(self, value: str | None) -> None:
+        normalized_text = (value or "").strip()
+        if normalized_text == self._last_detected_windows_text:
+            return
+        self._last_detected_windows_text = normalized_text
+        detected = _detect_windows_activation_version(value)
+        self._activation.selected_windows_version = detected
+        self.win11_radio.blockSignals(True)
+        self.win10_radio.blockSignals(True)
+        try:
+            self.win11_radio.setChecked(detected == "windows_11")
+            self.win10_radio.setChecked(detected == "windows_10")
+        finally:
+            self.win11_radio.blockSignals(False)
+            self.win10_radio.blockSignals(False)
+        self._sync_win11_only_state()
+
+    def _apply_detected_office_selection(self, value: str | None) -> None:
+        normalized_text = (value or "").strip()
+        if normalized_text == self._last_detected_office_text:
+            return
+        self._last_detected_office_text = normalized_text
+        detected = _detect_office_activation_version(value)
+        self._activation.selected_office_version = detected
+        self.office2021_radio.blockSignals(True)
+        self.office2024_radio.blockSignals(True)
+        try:
+            self.office2021_radio.setChecked(detected == "2021")
+            self.office2024_radio.setChecked(detected == "2024")
+        finally:
+            self.office2021_radio.blockSignals(False)
+            self.office2024_radio.blockSignals(False)
+
     def _sync_win11_only_state(self) -> None:
         is_win11 = self.win11_radio.isChecked()
         if hasattr(self, "start_menu_section"):
@@ -588,6 +624,7 @@ class ActionCenterPanel(QWidget):
         self.settings_summary.set_value(self._settings.summary_text, tone=_settings_summary_tone(self._settings))
         self.pc_check_summary.set_value(self._pc_check.summary_text, tone=_pc_check_summary_tone(self._pc_check))
         office_text = _office_detected_text(self._pc_check.installed_office_status_text)
+        self._apply_detected_office_selection(office_text)
         classroom_value, classroom_subtitle, classroom_tone = _classroom_summary_value(
             self._pc_check.power_option_status_text,
             self._pc_check.auto_shutdown_status_text,
@@ -763,6 +800,24 @@ def _office_detected_text(text: str) -> str:
     if _contains_any(text, ("설치되어 있지", "설치되지")):
         return "현재 감지: 없음"
     return f"현재 감지: {text}"
+
+
+def _detect_windows_activation_version(value: str | None) -> str:
+    text = (value or "").casefold()
+    if "windows 11" in text or "윈도우 11" in text:
+        return "windows_11"
+    if "windows 10" in text or "윈도우 10" in text:
+        return "windows_10"
+    return "windows_10"
+
+
+def _detect_office_activation_version(value: str | None) -> str:
+    text = (value or "").casefold()
+    if "2024" in text:
+        return "2024"
+    if "2021" in text:
+        return "2021"
+    return "2021"
 
 
 def _classroom_summary_value(power_text: str, shutdown_text: str) -> tuple[str, str, str]:

@@ -417,6 +417,9 @@ def test_activation_viewmodel_does_not_expose_product_key() -> None:
     office = FakeActivation("office_activation")
     view_model = ActivationViewModel(windows, office)
 
+    assert view_model.selected_windows_version == "windows_10"
+    assert view_model.selected_office_version == "2021"
+
     view_model.prepare_windows_activation("windows_10")
     assert view_model.status_message == "prepared"
     assert windows.requests == ["windows_10"]

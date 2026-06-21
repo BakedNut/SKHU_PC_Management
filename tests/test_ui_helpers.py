@@ -29,6 +29,8 @@ from skhu_pc_management.presentation.qt.panels.action_center_panel import (
     ActionCenterPanel,
     _PolicyActionRow,
     _classroom_summary_value,
+    _detect_office_activation_version,
+    _detect_windows_activation_version,
     _policy_status_tone,
     _short_power_status,
     _short_shutdown_status,
@@ -277,6 +279,18 @@ def test_policy_status_tone_maps_status_text_to_badge_tone() -> None:
     assert _policy_status_tone("오류") == ("오류", "danger")
 
 
+def test_activation_version_detection_helpers_choose_expected_defaults() -> None:
+    assert _detect_windows_activation_version("Windows 11 Pro") == "windows_11"
+    assert _detect_windows_activation_version("Microsoft Windows 10 Pro") == "windows_10"
+    assert _detect_windows_activation_version("") == "windows_10"
+    assert _detect_windows_activation_version("알 수 없음") == "windows_10"
+    assert _detect_office_activation_version("현재 감지: Office 2024") == "2024"
+    assert _detect_office_activation_version("현재 감지: Microsoft Office LTSC Professional Plus 2021") == "2021"
+    assert _detect_office_activation_version("현재 감지: Office 365") == "2021"
+    assert _detect_office_activation_version("현재 감지: 미확인") == "2021"
+    assert _detect_office_activation_version("현재 감지: 없음") == "2021"
+
+
 def test_policy_action_row_compact_threshold() -> None:
     assert _PolicyActionRow.should_use_compact_layout(619)
     assert not _PolicyActionRow.should_use_compact_layout(620)
@@ -344,9 +358,15 @@ def test_action_center_win11_only_start_menu_section_tracks_windows_selection(qt
     assert all(badge.objectName() == "settingBadge" for badge in badges)
     assert all(badge.property("tone") == "info" for badge in badges)
     assert panel.start_menu_section.objectName() == "settingsSection"
+    assert panel.start_menu_section.property("state") == "disabled"
+    assert not panel.start_menu_unavailable_label.isHidden()
+    assert panel._win11_setting_rows
+    assert all(row.isHidden() for row in panel._win11_setting_rows)
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+
     assert panel.start_menu_section.property("state") == "active"
     assert panel.start_menu_unavailable_label.isHidden()
-    assert panel._win11_setting_rows
     assert all(not row.isHidden() for row in panel._win11_setting_rows)
 
     panel.win10_radio.setChecked(True)
@@ -435,6 +455,102 @@ def test_action_center_office_status_uses_detected_prefix_and_keeps_buttons_enab
     assert panel.office_activation_button.isEnabled()
 
 
+def test_action_center_windows_radio_tracks_detected_windows_text(qt_app: QApplication) -> None:
+    activation = _FakeActivation()
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), activation)
+
+    assert panel.win10_radio.isChecked()
+    assert activation.selected_windows_version == "windows_10"
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+    assert panel.win11_radio.isChecked()
+    assert activation.selected_windows_version == "windows_11"
+
+    panel.set_detected_windows_text("Windows 10 Pro")
+    assert panel.win10_radio.isChecked()
+    assert activation.selected_windows_version == "windows_10"
+
+    panel.set_detected_windows_text("")
+    assert panel.win10_radio.isChecked()
+    assert activation.selected_windows_version == "windows_10"
+
+
+def test_action_center_office_radio_tracks_detected_office_status(qt_app: QApplication) -> None:
+    pc_check = _FakePcCheck()
+    pc_check.installed_office_status_text = "현재 감지: 미확인"
+    activation = _FakeActivation()
+    panel = ActionCenterPanel(_FakeSettings(), pc_check, activation)
+
+    assert panel.office2021_radio.isChecked()
+    assert activation.selected_office_version == "2021"
+
+    pc_check.installed_office_status_text = "현재 감지: Office 2024"
+    panel.render()
+    assert panel.office2024_radio.isChecked()
+    assert activation.selected_office_version == "2024"
+
+    pc_check.installed_office_status_text = "현재 감지: Office 2021"
+    panel.render()
+    assert panel.office2021_radio.isChecked()
+    assert activation.selected_office_version == "2021"
+
+    pc_check.installed_office_status_text = "현재 감지: Office 365"
+    panel.render()
+    assert panel.office2021_radio.isChecked()
+    assert activation.selected_office_version == "2021"
+
+
+def test_action_center_manual_activation_selection_is_not_overwritten_by_same_detection(qt_app: QApplication) -> None:
+    pc_check = _FakePcCheck()
+    pc_check.installed_office_status_text = "현재 감지: Office 2024"
+    activation = _FakeActivation()
+    panel = ActionCenterPanel(_FakeSettings(), pc_check, activation)
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+    assert panel.win11_radio.isChecked()
+    assert panel.office2024_radio.isChecked()
+
+    panel.win10_radio.setChecked(True)
+    panel.office2021_radio.setChecked(True)
+    panel.render()
+
+    assert panel.win10_radio.isChecked()
+    assert activation.selected_windows_version == "windows_10"
+    assert panel.office2021_radio.isChecked()
+    assert activation.selected_office_version == "2021"
+
+    panel.set_detected_windows_text("Windows 10 Pro")
+    pc_check.installed_office_status_text = "현재 감지: Office 2021"
+    panel.render()
+
+    assert panel.win10_radio.isChecked()
+    assert activation.selected_windows_version == "windows_10"
+    assert panel.office2021_radio.isChecked()
+    assert activation.selected_office_version == "2021"
+
+
+def test_action_center_activation_buttons_use_current_radio_selection(qt_app: QApplication) -> None:
+    pc_check = _FakePcCheck()
+    pc_check.installed_office_status_text = "현재 감지: 미확인"
+    activation = _RecordingActivation()
+    panel = ActionCenterPanel(_FakeSettings(), pc_check, activation)
+
+    panel._prepare_windows_activation()
+    panel._prepare_office_activation()
+
+    assert activation.windows_requests == ["windows_10"]
+    assert activation.office_requests == ["2021"]
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+    pc_check.installed_office_status_text = "현재 감지: Office 2024"
+    panel.render()
+    panel._prepare_windows_activation()
+    panel._prepare_office_activation()
+
+    assert activation.windows_requests[-1] == "windows_11"
+    assert activation.office_requests[-1] == "2024"
+
+
 def test_action_center_summary_treats_cannot_confirm_messages_as_unknown() -> None:
     assert _short_shutdown_status("자동종료 스케줄 상태를 확인할 수 없습니다.") == (
         "확인 불가",
@@ -488,9 +604,25 @@ class _FakePcCheck:
 
 
 class _FakeActivation:
-    selected_windows_version = "windows_11"
-    selected_office_version = "2024"
-    status_message = ""
+    def __init__(self) -> None:
+        self.selected_windows_version = "windows_10"
+        self.selected_office_version = "2021"
+        self.status_message = ""
+
+
+class _RecordingActivation(_FakeActivation):
+    def __init__(self) -> None:
+        super().__init__()
+        self.windows_requests: list[str] = []
+        self.office_requests: list[str] = []
+
+    def prepare_windows_activation(self, version: str) -> None:
+        self.windows_requests.append(version)
+        self.selected_windows_version = version
+
+    def prepare_office_activation(self, version: str) -> None:
+        self.office_requests.append(version)
+        self.selected_office_version = version
 
 
 class _FakeListNetworkAdapters:

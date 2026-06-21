@@ -9,8 +9,8 @@ class ActivationViewModel:
     activate_windows_use_case: Any
     activate_office_use_case: Any
     status_message: str = "인증 준비 작업을 실행하지 않았습니다."
-    selected_windows_version: str = "windows_11"
-    selected_office_version: str = "2024"
+    selected_windows_version: str = "windows_10"
+    selected_office_version: str = "2021"
     recommended_office_version: str | None = None
     is_busy: bool = False
 
