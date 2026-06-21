@@ -126,6 +126,95 @@ class WindowsInstalledProgramReader:
                     return str(Path(value) / "Bandizip.exe")
         return None
 
+    def list_installed_programs(self) -> list[InstalledProgramInfo]:
+        uninstall_roots = (
+            ("HKEY_LOCAL_MACHINE", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            ("HKEY_LOCAL_MACHINE", r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            ("HKEY_CURRENT_USER", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        )
+
+        programs: list[InstalledProgramInfo] = []
+        seen_names: set[str] = set()
+
+        for hive, root_path in uninstall_roots:
+            try:
+                subkeys = self.registry.list_subkeys(hive, root_path)
+            except Exception:
+                continue
+
+            for subkey in subkeys:
+                try:
+                    program = self._read_uninstall_program(hive, root_path, subkey)
+                except Exception:
+                    continue
+
+                if program is None:
+                    continue
+
+                dedupe_key = program.name.strip().lower()
+                if dedupe_key in seen_names:
+                    continue
+
+                seen_names.add(dedupe_key)
+                programs.append(program)
+
+        return sorted(programs, key=lambda program: program.name.lower())
+
+    def _read_uninstall_program(
+        self,
+        hive: str,
+        root_path: str,
+        subkey: str,
+    ) -> InstalledProgramInfo | None:
+        key_path = rf"{root_path}\{subkey}"
+
+        display_name = self._read_registry_string(hive, key_path, "DisplayName")
+        if not display_name:
+            return None
+
+        if self._is_system_component(hive, key_path):
+            return None
+
+        version = self._read_registry_string(hive, key_path, "DisplayVersion")
+        install_location = self._read_registry_string(hive, key_path, "InstallLocation")
+        publisher = self._read_registry_string(hive, key_path, "Publisher")
+
+        return InstalledProgramInfo(
+            program_id=_normalize_program_id(display_name),
+            name=display_name,
+            version=version,
+            path=install_location or publisher,
+        )
+
+    def _read_registry_string(
+        self,
+        hive: str,
+        key_path: str,
+        value_name: str,
+    ) -> str | None:
+        try:
+            value = self.registry.read_value(hive, key_path, value_name)
+        except (FileNotFoundError, OSError):
+            return None
+
+        if not isinstance(value, str):
+            return None
+
+        text = value.strip()
+        return text or None
+
+    def _is_system_component(
+        self,
+        hive: str,
+        key_path: str,
+    ) -> bool:
+        try:
+            value = self.registry.read_value(hive, key_path, "SystemComponent")
+        except (FileNotFoundError, OSError):
+            return False
+
+        return value in (1, "1", True)
+
 
 _PROGRAM_NAMES = {
     "chrome": "Google Chrome",
@@ -344,3 +433,9 @@ def _clean_version_text(value: str | None) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+def _normalize_program_id(display_name: str) -> str:
+    normalized = display_name.strip().lower()
+    normalized = re.sub(r"[^a-z0-9가-힣]+", "_", normalized)
+    normalized = normalized.strip("_")
+    return normalized[:100] or "unknown"

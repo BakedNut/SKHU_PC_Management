@@ -6,7 +6,7 @@ from skhu_pc_management.domain.checks.models import InstalledProgramInfo
 from skhu_pc_management.ports.installed_program_reader import InstalledProgramReader
 
 
-DEFAULT_PROGRAM_IDS = (
+FALLBACK_PROGRAM_IDS = (
     "chrome",
     "edge",
     "potplayer",
@@ -17,12 +17,25 @@ DEFAULT_PROGRAM_IDS = (
 @dataclass(frozen=True)
 class ListInstalledPrograms:
     installed_program_reader: InstalledProgramReader
-    program_ids: tuple[str, ...] = DEFAULT_PROGRAM_IDS
 
     def execute(self) -> list[InstalledProgramInfo]:
+        programs = self._list_all_installed_programs()
+
+        if programs:
+            return programs
+
+        return self._list_fallback_programs()
+
+    def _list_all_installed_programs(self) -> list[InstalledProgramInfo]:
+        try:
+            return self.installed_program_reader.list_installed_programs()
+        except Exception:
+            return []
+
+    def _list_fallback_programs(self) -> list[InstalledProgramInfo]:
         programs: list[InstalledProgramInfo] = []
 
-        for program_id in self.program_ids:
+        for program_id in FALLBACK_PROGRAM_IDS:
             try:
                 program = self.installed_program_reader.get_program(program_id)
             except Exception:

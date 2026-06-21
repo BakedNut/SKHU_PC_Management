@@ -11,3 +11,6 @@ class InstalledProgramReader(Protocol):
 
     def get_installed_office_name(self) -> str | None:
         """Return installed Office display name, if present."""
+
+    def list_installed_programs(self) -> list[InstalledProgramInfo]:
+        """Return installed programs from Windows Uninstall registry."""
