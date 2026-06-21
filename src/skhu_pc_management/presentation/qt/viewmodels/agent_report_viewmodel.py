@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,9 @@ class AgentReportViewModel:
     last_result_message: str = "-"
     is_busy: bool = False
     logger: Any = None
+
+    max_retry_count: int = 3
+    retry_delay_seconds: int = 5
 
     def send_report(self) -> None:
         if self.logger is None:
@@ -41,29 +45,8 @@ class AgentReportViewModel:
         self.status_message = "PC 정보를 수집하고 서버로 전송하는 중입니다."
 
         try:
-            pc_info = self.load_pc_info_use_case.execute()
-
-            network_adapters = self._safe_execute_list(
-                self.list_network_adapters_use_case,
-                "network adapters",
-            )
-            check_results = self._safe_execute_list(
-                self.run_pc_checks_use_case,
-                "pc checks",
-            )
-            installed_programs = self._safe_execute_list(
-                self.list_installed_programs_use_case,
-                "installed programs",
-            )
-
-            report = self.build_agent_report_use_case.execute(
-                pc_info=pc_info,
-                network_adapters=network_adapters,
-                check_results=check_results,
-                installed_programs=installed_programs,
-            )
-
-            result = self.send_agent_report_use_case.execute(report)
+            report = self._build_report()
+            result = self._send_with_retry(report)
 
             self.status_message = "서버 전송이 완료되었습니다."
             self.last_result_message = (
@@ -76,9 +59,60 @@ class AgentReportViewModel:
         except Exception as exc:
             self.status_message = "서버 전송에 실패했습니다."
             self.last_result_message = str(exc)
-            self.logger.exception("Agent report send failed")
+            self.logger.exception("Agent report send failed after retries")
         finally:
             self.is_busy = False
+
+    def _build_report(self) -> Any:
+        pc_info = self.load_pc_info_use_case.execute()
+
+        network_adapters = self._safe_execute_list(
+            self.list_network_adapters_use_case,
+            "network adapters",
+        )
+        check_results = self._safe_execute_list(
+            self.run_pc_checks_use_case,
+            "pc checks",
+        )
+        installed_programs = self._safe_execute_list(
+            self.list_installed_programs_use_case,
+            "installed programs",
+        )
+
+        return self.build_agent_report_use_case.execute(
+            pc_info=pc_info,
+            network_adapters=network_adapters,
+            check_results=check_results,
+            installed_programs=installed_programs,
+        )
+
+    def _send_with_retry(self, report: Any) -> Any:
+        last_error: Exception | None = None
+
+        for attempt in range(1, self.max_retry_count + 1):
+            try:
+                self.logger.info(
+                    "Sending agent report attempt %s/%s",
+                    attempt,
+                    self.max_retry_count,
+                )
+                return self.send_agent_report_use_case.execute(report)
+            except Exception as exc:
+                last_error = exc
+                self.logger.warning(
+                    "Agent report attempt %s/%s failed: %s",
+                    attempt,
+                    self.max_retry_count,
+                    exc,
+                )
+
+                if attempt < self.max_retry_count:
+                    time.sleep(self.retry_delay_seconds)
+
+        if last_error is not None:
+            raise last_error
+
+        raise RuntimeError("Agent report send failed for unknown reason.")
 
     def _safe_execute_list(
         self,
