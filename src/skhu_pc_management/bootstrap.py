@@ -12,10 +12,10 @@ from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyT
 from skhu_pc_management.application.use_cases.build_agent_report import BuildAgentReport
 from skhu_pc_management.application.use_cases.check_settings_status import CheckSettingsStatus
 from skhu_pc_management.application.use_cases.launch_program import LaunchProgram
+from skhu_pc_management.application.use_cases.list_installed_programs import ListInstalledPrograms
 from skhu_pc_management.application.use_cases.list_network_adapters import ListNetworkAdapters
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo
 from skhu_pc_management.application.use_cases.rename_pc import RenamePc
-from skhu_pc_management.presentation.qt.viewmodels.agent_report_viewmodel import AgentReportViewModel
 from skhu_pc_management.application.use_cases.run_pc_checks import (
     AutoShutdownScheduleCheck,
     BrowserHistoryCheck,
@@ -62,6 +62,7 @@ from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import WmiPcIn
 from skhu_pc_management.presentation.qt.main_window import MainWindow
 from skhu_pc_management.presentation.qt.startup_coordinator import StartupCoordinator
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
+from skhu_pc_management.presentation.qt.viewmodels.agent_report_viewmodel import AgentReportViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel
@@ -103,6 +104,7 @@ class UseCaseContainer:
     system_settings_actions: SystemSettingsActions
     apply_settings: ApplySettings
     list_network_adapters: ListNetworkAdapters
+    list_installed_programs: ListInstalledPrograms
     apply_static_ip: ApplyStaticIp
     set_dhcp: SetDhcp
     rename_pc: RenamePc
@@ -184,12 +186,19 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
         "set_taskbar_icons": TaskbarLayoutStatusProvider(infra.resource_resolver),
         "disable_password_expiration": PasswordExpirationStatusProvider(infra.command_runner),
     }
+
     check_settings_status = CheckSettingsStatus(
         infra.registry,
         setting_status_providers=setting_status_providers,
     )
-    apply_taskbar_layout = ApplyTaskbarLayout(infra.taskbar_configurator, safety_guard=safety_guard)
-    system_settings_actions = SystemSettingsActions(infra.system_settings_operator, safety_guard=safety_guard)
+    apply_taskbar_layout = ApplyTaskbarLayout(
+        infra.taskbar_configurator,
+        safety_guard=safety_guard,
+    )
+    system_settings_actions = SystemSettingsActions(
+        infra.system_settings_operator,
+        safety_guard=safety_guard,
+    )
 
     build_agent_report = BuildAgentReport()
     send_agent_report = (
@@ -199,7 +208,12 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
     )
 
     return UseCaseContainer(
-        load_pc_info=LoadPcInfo(WmiPcInfoReader(registry=infra.registry, command_runner=infra.command_runner)),
+        load_pc_info=LoadPcInfo(
+            WmiPcInfoReader(
+                registry=infra.registry,
+                command_runner=infra.command_runner,
+            )
+        ),
         check_settings_status=check_settings_status,
         validate_taskbar_resources=ValidateTaskbarResources(infra.taskbar_configurator),
         apply_taskbar_layout=apply_taskbar_layout,
@@ -212,11 +226,15 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
             apply_taskbar_layout_use_case=apply_taskbar_layout,
         ),
         list_network_adapters=ListNetworkAdapters(infra.network_configurator),
+        list_installed_programs=ListInstalledPrograms(infra.installed_program_reader),
         apply_static_ip=ApplyStaticIp(infra.network_configurator, safety_guard=safety_guard),
         set_dhcp=SetDhcp(infra.network_configurator, safety_guard=safety_guard),
         rename_pc=RenamePc(infra.pc_renamer, safety_guard=safety_guard),
         launch_program=LaunchProgram(infra.program_launcher, safety_guard=safety_guard),
-        run_pc_maintenance=RunPcMaintenance(infra.system_maintenance, safety_guard=safety_guard),
+        run_pc_maintenance=RunPcMaintenance(
+            infra.system_maintenance,
+            safety_guard=safety_guard,
+        ),
         run_pc_checks=RunPcChecks(_create_pc_checks(infra)),
         activate_windows=ActivateWindows(
             infra.product_key_provider,
@@ -250,18 +268,25 @@ def create_view_models(use_cases: UseCaseContainer) -> ViewModelContainer:
             use_cases.set_dhcp,
         ),
         pc_check=PcCheckViewModel(use_cases.run_pc_checks),
-        activation=ActivationViewModel(use_cases.activate_windows, use_cases.activate_office),
+        activation=ActivationViewModel(
+            use_cases.activate_windows,
+            use_cases.activate_office,
+        ),
         agent_report=AgentReportViewModel(
             use_cases.load_pc_info,
             use_cases.list_network_adapters,
             use_cases.run_pc_checks,
+            use_cases.list_installed_programs,
             use_cases.build_agent_report,
             use_cases.send_agent_report,
         ),
     )
 
 
-def create_startup_coordinator(infra: InfrastructureContainer, view_models: ViewModelContainer) -> StartupCoordinator:
+def create_startup_coordinator(
+    infra: InfrastructureContainer,
+    view_models: ViewModelContainer,
+) -> StartupCoordinator:
     return StartupCoordinator(
         admin_privilege_checker=infra.admin_privilege_checker,
         pc_info_view_model=view_models.pc_info,
@@ -284,12 +309,17 @@ def create_main_window() -> MainWindow:
         network_view_model=view_models.network,
         pc_check_view_model=view_models.pc_check,
         activation_view_model=view_models.activation,
+        agent_report_view_model=view_models.agent_report,
         launch_program_use_case=use_cases.launch_program,
         maintenance_use_case=use_cases.run_pc_maintenance,
         startup_coordinator=startup_coordinator,
         resource_resolver=infra.resource_resolver,
         test_mode=test_mode,
-        agent_report_view_model=view_models.agent_report,
+        auto_send_on_startup=bool(
+            infra.agent_config.auto_send_on_startup
+            if infra.agent_config is not None
+            else False
+        ),
     )
 
 
@@ -304,7 +334,12 @@ def _create_pc_checks(infra: InfrastructureContainer) -> list[object]:
             "chrome",
             "Chrome",
         ),
-        BrowserHistoryCheck(infra.browser_data_reader, "chrome_history", "Chrome 기록 확인", "chrome"),
+        BrowserHistoryCheck(
+            infra.browser_data_reader,
+            "chrome_history",
+            "Chrome 기록 확인",
+            "chrome",
+        ),
         ProgramVersionCheck(
             infra.installed_program_reader,
             infra.latest_version_provider,
@@ -313,9 +348,17 @@ def _create_pc_checks(infra: InfrastructureContainer) -> list[object]:
             "edge",
             "Edge",
         ),
-        BrowserHistoryCheck(infra.browser_data_reader, "edge_history", "Edge 기록 확인", "edge"),
+        BrowserHistoryCheck(
+            infra.browser_data_reader,
+            "edge_history",
+            "Edge 기록 확인",
+            "edge",
+        ),
         PowerSettingsCheck(infra.power_settings_reader),
-        AutoShutdownScheduleCheck(infra.scheduled_task_reader, infra.auto_shutdown_cancel_shortcut),
+        AutoShutdownScheduleCheck(
+            infra.scheduled_task_reader,
+            infra.auto_shutdown_cancel_shortcut,
+        ),
         ProgramVersionCheck(
             infra.installed_program_reader,
             infra.latest_version_provider,

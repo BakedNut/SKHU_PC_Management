@@ -21,14 +21,14 @@ from skhu_pc_management.presentation.qt.panels.network_panel import NetworkPanel
 from skhu_pc_management.presentation.qt.panels.pc_info_panel import PcInfoPanel
 from skhu_pc_management.presentation.qt.startup_coordinator import StartupCoordinator
 from skhu_pc_management.presentation.qt.styles import APP_QSS
-from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge
-from skhu_pc_management.presentation.qt.widgets.buttons import nav_button, set_selected
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.agent_report_viewmodel import AgentReportViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
+from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge
+from skhu_pc_management.presentation.qt.widgets.buttons import nav_button, set_selected
 from skhu_pc_management.ports.resource_resolver import ResourceResolver
 
 
@@ -46,14 +46,18 @@ class MainWindow(QMainWindow):
         maintenance_use_case: object | None = None,
         resource_resolver: ResourceResolver | None = None,
         test_mode: bool = False,
+        auto_send_on_startup: bool = False,
     ) -> None:
         super().__init__()
         self.setWindowTitle("성공회대학교 PC 관리 프로그램")
         self.setStyleSheet(APP_QSS)
+
         self._pc_info_view_model = pc_info_view_model
         self._startup_coordinator = startup_coordinator
         self._resource_resolver = resource_resolver
         self._test_mode = test_mode
+        self._auto_send_on_startup = auto_send_on_startup
+
         self._busy_coordinator = BusyCoordinator()
         self._busy_coordinator.add_listener(self._on_busy_changed)
         self.is_busy = self._busy_coordinator.is_busy
@@ -63,14 +67,17 @@ class MainWindow(QMainWindow):
         self.pc_badge = StatusBadge("PC: 알 수 없음", "neutral")
         self.windows_badge.setObjectName("headerBadge")
         self.pc_badge.setObjectName("headerBadge")
+
         self.test_mode_badge = StatusBadge("테스트 모드", "warning")
         self.test_mode_badge.setVisible(test_mode)
 
         self.busy_banner = QFrame()
         self.busy_banner.setObjectName("infoBanner")
         self.busy_banner.setVisible(False)
+
         busy_layout = QVBoxLayout(self.busy_banner)
         busy_layout.setContentsMargins(14, 10, 14, 10)
+
         self.status_label = QLabel("")
         self.status_label.setObjectName("mutedText")
         busy_layout.addWidget(self.status_label)
@@ -111,11 +118,15 @@ class MainWindow(QMainWindow):
             nav_button("네트워크"),
             nav_button("서버 전송"),
         ]
+
         for index, button in enumerate(self.nav_buttons):
-            button.clicked.connect(lambda checked=False, page_index=index: self._select_page(page_index))
+            button.clicked.connect(
+                lambda checked=False, page_index=index: self._select_page(page_index)
+            )
 
         central = QWidget()
         central.setObjectName("appShell")
+
         shell = QVBoxLayout(central)
         shell.setContentsMargins(16, 16, 16, 16)
         shell.setSpacing(14)
@@ -125,10 +136,13 @@ class MainWindow(QMainWindow):
         if test_mode:
             test_banner = QFrame()
             test_banner.setObjectName("warningBanner")
+
             test_layout = QVBoxLayout(test_banner)
             test_layout.setContentsMargins(14, 10, 14, 10)
+
             test_text = QLabel(TEST_MODE_DISABLED_MESSAGE)
             test_text.setObjectName("mutedText")
+
             test_layout.addWidget(test_text)
             shell.addWidget(test_banner)
 
@@ -143,11 +157,13 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1000, 700)
         self._select_page(0)
         self._apply_branding()
+
         QTimer.singleShot(0, self.initialize_startup)
 
     def _top_bar(self) -> QWidget:
         frame = QFrame()
         frame.setObjectName("topBar")
+
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(18, 14, 18, 14)
 
@@ -212,7 +228,9 @@ class MainWindow(QMainWindow):
             result = self._startup_coordinator.initialize()
             self.pc_info_panel.render()
             self.action_center_panel.render()
-            self.action_center_panel.set_detected_windows_text(self._pc_info_view_model.windows_version)
+            self.action_center_panel.set_detected_windows_text(
+                self._pc_info_view_model.windows_version
+            )
             self.agent_report_panel.render()
             self._update_header_badges()
 
@@ -239,8 +257,20 @@ class MainWindow(QMainWindow):
 
             final_message = " ".join(messages)
         finally:
-            self._busy_coordinator.end(locals().get("final_message", "초기화가 완료되었습니다."))
+            self._busy_coordinator.end(
+                locals().get("final_message", "초기화가 완료되었습니다.")
+            )
             QTimer.singleShot(0, self.network_panel._load_adapters)
+
+            if self._auto_send_on_startup:
+                QTimer.singleShot(500, self._auto_send_agent_report)
+
+    def _auto_send_agent_report(self) -> None:
+        if self._busy_coordinator.is_busy:
+            QTimer.singleShot(1000, self._auto_send_agent_report)
+            return
+
+        self.agent_report_panel._send_report()
 
     def _on_busy_changed(self, is_busy: bool, message: str) -> None:
         self.is_busy = is_busy

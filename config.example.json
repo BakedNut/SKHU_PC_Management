@@ -1,5 +1,6 @@
 {
   "apiBaseUrl": "https://api.skhuas.tech",
   "agentApiKey": "CHANGE_ME",
-  "timeoutSeconds": 10
+  "timeoutSeconds": 10,
+  "autoSendOnStartup": false
 }

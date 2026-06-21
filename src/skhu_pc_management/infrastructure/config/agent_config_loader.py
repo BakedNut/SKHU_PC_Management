@@ -8,6 +8,7 @@ class AgentConfig:
     api_base_url: str
     agent_api_key: str
     timeout_seconds: int = 10
+    auto_send_on_startup: bool = False
 
 
 def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
@@ -25,4 +26,5 @@ def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
         api_base_url=str(data["apiBaseUrl"]).rstrip("/"),
         agent_api_key=str(data["agentApiKey"]),
         timeout_seconds=int(data.get("timeoutSeconds", 10)),
+        auto_send_on_startup=bool(data.get("autoSendOnStartup", False)),
     )
