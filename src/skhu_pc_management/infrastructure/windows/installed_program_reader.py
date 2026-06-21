@@ -13,6 +13,9 @@ class WindowsInstalledProgramReader:
     registry: Registry
 
     def get_program(self, program_id: str) -> InstalledProgramInfo | None:
+        if program_id == "potplayer":
+            return self._get_potplayer_program()
+
         paths = _PROGRAM_PATHS.get(program_id, ())
         registry_path = self._get_program_registry_path(program_id)
         if registry_path:
@@ -27,14 +30,32 @@ class WindowsInstalledProgramReader:
                     version=self._get_program_version(program_id, path),
                     path=str(path),
                 )
-        if program_id == "potplayer":
-            registry_version = _get_potplayer_registry_version(self.registry)
-            if registry_version:
-                return InstalledProgramInfo(
-                    program_id=program_id,
-                    name=_PROGRAM_NAMES.get(program_id, program_id),
-                    version=registry_version,
-                )
+        return None
+
+    def _get_potplayer_program(self) -> InstalledProgramInfo | None:
+        paths = _PROGRAM_PATHS.get("potplayer", ())
+        registry_path = self._get_program_registry_path("potplayer")
+        if registry_path:
+            paths = (registry_path, *paths)
+
+        for raw_path in paths:
+            exe_path = _resolve_potplayer_exe_path(raw_path)
+            if exe_path is None:
+                continue
+            return InstalledProgramInfo(
+                program_id="potplayer",
+                name=_PROGRAM_NAMES["potplayer"],
+                version=self._get_program_version("potplayer", exe_path),
+                path=str(exe_path),
+            )
+
+        registry_version = _get_potplayer_registry_version(self.registry)
+        if registry_version:
+            return InstalledProgramInfo(
+                program_id="potplayer",
+                name=_PROGRAM_NAMES["potplayer"],
+                version=registry_version,
+            )
         return None
 
     def get_installed_office_name(self) -> str | None:
@@ -65,14 +86,16 @@ class WindowsInstalledProgramReader:
 
     def _get_program_version(self, program_id: str, path: Path) -> str | None:
         if program_id == "potplayer":
+            if not path.is_file():
+                return _get_potplayer_registry_version(self.registry)
             history_version = _get_potplayer_history_version(path)
             if history_version:
                 return history_version
-            registry_version = _get_potplayer_registry_version(self.registry)
-            if registry_version:
-                return registry_version
             file_version = _get_file_version(path)
-            return _extract_potplayer_date_version(file_version)
+            file_date_version = _extract_potplayer_date_version(file_version)
+            if file_date_version:
+                return file_date_version
+            return _get_potplayer_registry_version(self.registry)
 
         if program_id == "bandizip":
             file_version = _get_file_version(path)
@@ -132,6 +155,25 @@ _PROGRAM_PATHS = {
         r"C:\Program Files (x86)\Bandizip\Bandizip.exe",
     ),
 }
+
+_POTPLAYER_EXE_NAMES = (
+    "PotPlayerMini64.exe",
+    "PotPlayerMini.exe",
+    "PotPlayer64.exe",
+    "PotPlayer.exe",
+)
+
+
+def _resolve_potplayer_exe_path(raw_path: str | Path) -> Path | None:
+    path = Path(raw_path)
+    if path.is_file():
+        return path
+    if path.is_dir():
+        for exe_name in _POTPLAYER_EXE_NAMES:
+            candidate = path / exe_name
+            if candidate.is_file():
+                return candidate
+    return None
 
 
 def _is_office_display_name(display_name: str) -> bool:
@@ -197,13 +239,20 @@ def _get_file_string_info(win32api: object, path: Path, field_name: str) -> str 
 def _get_potplayer_history_version(path: Path) -> str | None:
     history_path = path.parent / "History" / "Korean.txt"
     try:
-        content = history_path.read_text(encoding="mbcs")
+        content = history_path.read_bytes()
     except Exception:
         return None
     return _parse_potplayer_history_version(content)
 
 
-def _parse_potplayer_history_version(content: str) -> str | None:
+def _parse_potplayer_history_version(content: str | bytes) -> str | None:
+    if isinstance(content, bytes):
+        match = re.search(rb"\[(\d{6})\]", content)
+        if not match:
+            return None
+        candidate = match.group(1).decode("ascii")
+        return candidate if _is_valid_potplayer_date_version(candidate) else None
+
     match = re.search(r"\[(\d{6})\]", content)
     if not match:
         return None

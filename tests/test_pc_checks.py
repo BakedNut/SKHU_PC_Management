@@ -382,6 +382,7 @@ def test_latest_version_provider_parsers_do_not_require_network() -> None:
 
 def test_local_version_parsers_for_potplayer_and_bandizip() -> None:
     assert _parse_potplayer_history_version("변경 사항 [250101]") == "250101"
+    assert _parse_potplayer_history_version(b"\xef\xbb\xbf\xbf\xfe [260401]") == "260401"
     assert _extract_potplayer_date_version("260401") == "260401"
     assert _extract_potplayer_date_version("[260401]") == "260401"
     assert _extract_potplayer_date_version("26.04.01") == "260401"
@@ -832,6 +833,50 @@ def test_installed_program_reader_uses_registry_path_for_potplayer(tmp_path: Pat
     assert program.path == str(exe)
 
 
+def test_installed_program_reader_resolves_potplayer_exe_from_registry_directory(tmp_path: Path) -> None:
+    install_dir = tmp_path / "PotPlayer"
+    install_dir.mkdir()
+    exe = install_dir / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    history_dir = install_dir / "History"
+    history_dir.mkdir()
+    (history_dir / "Korean.txt").write_text("changes [260401]", encoding="ascii")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(install_dir)
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.path == str(exe)
+    assert program.version == "260401"
+
+
+def test_installed_program_reader_skips_potplayer_registry_directory_without_exe_and_uses_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    registry_dir = tmp_path / "RegistryPotPlayer"
+    registry_dir.mkdir()
+    fallback_dir = tmp_path / "FallbackPotPlayer"
+    fallback_dir.mkdir()
+    fallback_exe = fallback_dir / "PotPlayerMini.exe"
+    fallback_exe.write_text("fake exe", encoding="utf-8")
+    history_dir = fallback_dir / "History"
+    history_dir.mkdir()
+    (history_dir / "Korean.txt").write_text("changes [250617]", encoding="ascii")
+    monkeypatch.setitem(installed_program_reader._PROGRAM_PATHS, "potplayer", (str(fallback_exe),))
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(registry_dir)
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.path == str(fallback_exe)
+    assert program.version == "250617"
+
+
 def test_installed_program_reader_uses_potplayer_registry_version(tmp_path: Path) -> None:
     exe = tmp_path / "PotPlayerMini64.exe"
     exe.write_text("fake exe", encoding="utf-8")
@@ -938,6 +983,24 @@ def test_installed_program_reader_extracts_potplayer_date_from_embedded_file_ver
     exe.write_text("fake exe", encoding="utf-8")
     registry = FakeRegistry()
     registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    monkeypatch.setattr(installed_program_reader, "_get_file_version", lambda path: "1.7.260401.0")
+    reader = WindowsInstalledProgramReader(registry)
+
+    program = reader.get_program("potplayer")
+
+    assert program is not None
+    assert program.version == "260401"
+
+
+def test_installed_program_reader_prefers_potplayer_file_date_before_registry_version(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exe = tmp_path / "PotPlayerMini64.exe"
+    exe.write_text("fake exe", encoding="utf-8")
+    registry = FakeRegistry()
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "ProgramPath")] = str(exe)
+    registry.values[("HKEY_LOCAL_MACHINE", r"SOFTWARE\DAUM\PotPlayer64", "Version")] = "250617"
     monkeypatch.setattr(installed_program_reader, "_get_file_version", lambda path: "1.7.260401.0")
     reader = WindowsInstalledProgramReader(registry)
 
