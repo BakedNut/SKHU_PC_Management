@@ -63,7 +63,7 @@ class RunPcMaintenance:
             name="23시 자동종료 적용",
             success=True,
             status="applied",
-            message="23시 자동종료 작업이 등록되었습니다. (22:55 시작 + 300초 후 종료)",
+            message="23시 자동종료 작업과 취소 바로가기가 준비되었습니다. (22:55 시작 + 300초 후 종료)",
         )
 
 

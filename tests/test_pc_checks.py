@@ -28,6 +28,7 @@ from skhu_pc_management.domain.checks.models import (
     ScheduledTaskInfo,
     ac_timeout_display,
 )
+from skhu_pc_management.ports.auto_shutdown_cancel_shortcut import AutoShutdownCancelShortcutStatus
 from skhu_pc_management.infrastructure.windows import installed_program_reader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import WindowsInstalledProgramReader
 from skhu_pc_management.infrastructure.windows.installed_program_reader import (
@@ -106,6 +107,19 @@ class FakeScheduledTaskReader:
     def get_task(self, name: str) -> ScheduledTaskInfo:
         self.reads.append(name)
         return self.task
+
+
+class FakeAutoShutdownCancelShortcut:
+    def __init__(self, status: AutoShutdownCancelShortcutStatus) -> None:
+        self.status = status
+        self.check_count = 0
+
+    def install(self) -> Path:
+        return self.status.desktop_path
+
+    def check(self) -> AutoShutdownCancelShortcutStatus:
+        self.check_count += 1
+        return self.status
 
 
 class FakeCommandRunner:
@@ -583,12 +597,79 @@ def test_auto_shutdown_schedule_check_reports_ok_for_matching_task() -> None:
         arguments='-s -t 300 -c "원치 않는 경우 바탕화면의 종료 취소를 실행해주세요"',
     )
     reader = FakeScheduledTaskReader(task)
+    shortcut = FakeAutoShutdownCancelShortcut(
+        AutoShutdownCancelShortcutStatus(
+            source_path=Path("resources/23시 자동종료 취소.lnk"),
+            desktop_path=Path("Desktop/23시 자동종료 취소.lnk"),
+            source_exists=True,
+            desktop_exists=True,
+            matches=True,
+        )
+    )
 
-    result = AutoShutdownScheduleCheck(reader).run()
+    result = AutoShutdownScheduleCheck(reader, shortcut).run()
 
     assert result.status == CheckStatus.OK
-    assert result.message == "23시 자동종료 스케줄이 정상 등록되어 있습니다."
+    assert result.message == "23시 자동종료 스케줄과 취소 바로가기가 정상입니다."
     assert reader.reads == ["23시 자동 종료"]
+    assert shortcut.check_count == 1
+
+
+def test_auto_shutdown_schedule_check_reports_warning_when_shortcut_is_missing() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable="shutdown.exe", arguments="-s -t 300")
+    shortcut = FakeAutoShutdownCancelShortcut(
+        AutoShutdownCancelShortcutStatus(
+            source_path=Path("resources/23시 자동종료 취소.lnk"),
+            desktop_path=Path("Desktop/23시 자동종료 취소.lnk"),
+            source_exists=True,
+            desktop_exists=False,
+            matches=False,
+            error="바탕화면에 23시 자동종료 취소.lnk가 없습니다.",
+        )
+    )
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task), shortcut).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "바탕화면에 23시 자동종료 취소.lnk가 없습니다."
+
+
+def test_auto_shutdown_schedule_check_reports_warning_when_shortcut_source_is_missing() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable="shutdown.exe", arguments="-s -t 300")
+    shortcut = FakeAutoShutdownCancelShortcut(
+        AutoShutdownCancelShortcutStatus(
+            source_path=Path("resources/23시 자동종료 취소.lnk"),
+            desktop_path=Path("Desktop/23시 자동종료 취소.lnk"),
+            source_exists=False,
+            desktop_exists=False,
+            matches=False,
+            error="자동종료 취소 바로가기 리소스를 찾을 수 없습니다.",
+        )
+    )
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task), shortcut).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "자동종료 취소 바로가기 리소스를 찾을 수 없습니다."
+
+
+def test_auto_shutdown_schedule_check_reports_warning_when_shortcut_differs() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable="shutdown.exe", arguments="-s -t 300")
+    shortcut = FakeAutoShutdownCancelShortcut(
+        AutoShutdownCancelShortcutStatus(
+            source_path=Path("resources/23시 자동종료 취소.lnk"),
+            desktop_path=Path("Desktop/23시 자동종료 취소.lnk"),
+            source_exists=True,
+            desktop_exists=True,
+            matches=False,
+            error="바탕화면의 23시 자동종료 취소.lnk가 리소스 원본과 다릅니다.",
+        )
+    )
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task), shortcut).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert result.message == "바탕화면의 23시 자동종료 취소.lnk가 리소스 원본과 다릅니다."
 
 
 def test_auto_shutdown_schedule_check_reports_warning_when_task_is_missing() -> None:

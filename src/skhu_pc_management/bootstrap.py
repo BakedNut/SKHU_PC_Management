@@ -29,6 +29,7 @@ from skhu_pc_management.application.use_cases.system_settings_actions import Sys
 from skhu_pc_management.application.use_cases.validate_taskbar_resources import ValidateTaskbarResources
 from skhu_pc_management.infrastructure.license.embedded_product_key_provider import EmbeddedProductKeyProvider
 from skhu_pc_management.infrastructure.windows.browser_data_reader import WindowsBrowserDataReader
+from skhu_pc_management.infrastructure.windows.auto_shutdown_cancel_shortcut import WindowsAutoShutdownCancelShortcut
 from skhu_pc_management.infrastructure.windows.installed_program_reader import WindowsInstalledProgramReader
 from skhu_pc_management.infrastructure.windows.latest_version_provider import WindowsLatestVersionProvider
 from skhu_pc_management.infrastructure.windows.netsh_network_configurator import NetshNetworkConfigurator
@@ -79,6 +80,7 @@ class InfrastructureContainer:
     installed_program_reader: WindowsInstalledProgramReader
     latest_version_provider: WindowsLatestVersionProvider
     browser_data_reader: WindowsBrowserDataReader
+    auto_shutdown_cancel_shortcut: WindowsAutoShutdownCancelShortcut
     power_settings_reader: WindowsPowerSettingsReader
     scheduled_task_reader: WindowsScheduledTaskReader
     recycle_bin_reader: WindowsRecycleBinReader
@@ -132,7 +134,8 @@ def create_infrastructure() -> InfrastructureContainer:
     taskbar_configurator = WindowsTaskbarConfigurator(resource_resolver, command_runner)
     pc_renamer = WindowsPcRenamer(command_runner)
     program_launcher = WindowsProgramLauncher(registry, process_launcher)
-    system_maintenance = WindowsSystemMaintenance(command_runner)
+    auto_shutdown_cancel_shortcut = WindowsAutoShutdownCancelShortcut(resource_resolver)
+    system_maintenance = WindowsSystemMaintenance(command_runner, auto_shutdown_cancel_shortcut)
     system_settings_operator = WindowsSystemSettingsOperator(registry, command_runner)
     installed_program_reader = WindowsInstalledProgramReader(registry)
 
@@ -152,6 +155,7 @@ def create_infrastructure() -> InfrastructureContainer:
         installed_program_reader=installed_program_reader,
         latest_version_provider=WindowsLatestVersionProvider(),
         browser_data_reader=WindowsBrowserDataReader(),
+        auto_shutdown_cancel_shortcut=auto_shutdown_cancel_shortcut,
         power_settings_reader=WindowsPowerSettingsReader(command_runner),
         scheduled_task_reader=WindowsScheduledTaskReader(command_runner),
         recycle_bin_reader=WindowsRecycleBinReader(),
@@ -280,7 +284,7 @@ def _create_pc_checks(infra: InfrastructureContainer) -> list[object]:
         ),
         BrowserHistoryCheck(infra.browser_data_reader, "edge_history", "Edge 기록 확인", "edge"),
         PowerSettingsCheck(infra.power_settings_reader),
-        AutoShutdownScheduleCheck(infra.scheduled_task_reader),
+        AutoShutdownScheduleCheck(infra.scheduled_task_reader, infra.auto_shutdown_cancel_shortcut),
         ProgramVersionCheck(
             infra.installed_program_reader,
             infra.latest_version_provider,

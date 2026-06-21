@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,18 @@ class FakeCommandRunner:
     def run(self, command: Sequence[str]) -> str:
         self.commands.append(tuple(command))
         return self.output
+
+
+class FakeAutoShutdownCancelShortcut:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.install_count = 0
+
+    def install(self) -> Path:
+        self.install_count += 1
+        if self.error is not None:
+            raise self.error
+        return Path("Desktop/23시 자동종료 취소.lnk")
 
 
 def test_set_auto_shutdown_at_23_uses_csharp_style_scheduled_task_script() -> None:
@@ -35,18 +48,40 @@ def test_set_auto_shutdown_at_23_uses_csharp_style_scheduled_task_script() -> No
     assert "-UserId 'SYSTEM'" not in script
 
 
+def test_set_auto_shutdown_at_23_installs_cancel_shortcut_after_task_registration() -> None:
+    runner = FakeCommandRunner("__OK__")
+    shortcut = FakeAutoShutdownCancelShortcut()
+
+    assert WindowsSystemMaintenance(runner, shortcut).set_auto_shutdown_at_23() is True
+
+    assert shortcut.install_count == 1
+
+
 def test_set_auto_shutdown_at_23_raises_clear_error_when_marker_is_error() -> None:
     runner = FakeCommandRunner("__ERROR__등록 실패")
+    shortcut = FakeAutoShutdownCancelShortcut()
 
     with pytest.raises(RuntimeError, match="등록 실패"):
-        WindowsSystemMaintenance(runner).set_auto_shutdown_at_23()
+        WindowsSystemMaintenance(runner, shortcut).set_auto_shutdown_at_23()
+    assert shortcut.install_count == 0
 
 
 def test_set_auto_shutdown_at_23_raises_when_output_is_empty() -> None:
     runner = FakeCommandRunner("")
+    shortcut = FakeAutoShutdownCancelShortcut()
 
     with pytest.raises(RuntimeError, match="등록 결과를 확인할 수 없습니다"):
-        WindowsSystemMaintenance(runner).set_auto_shutdown_at_23()
+        WindowsSystemMaintenance(runner, shortcut).set_auto_shutdown_at_23()
+    assert shortcut.install_count == 0
+
+
+def test_set_auto_shutdown_at_23_raises_when_cancel_shortcut_install_fails() -> None:
+    runner = FakeCommandRunner("__OK__")
+    shortcut = FakeAutoShutdownCancelShortcut(RuntimeError("source missing"))
+
+    with pytest.raises(RuntimeError, match="취소 바로가기 복사에 실패했습니다"):
+        WindowsSystemMaintenance(runner, shortcut).set_auto_shutdown_at_23()
+    assert shortcut.install_count == 1
 
 
 def _decode_encoded_powershell(command: tuple[str, ...]) -> str:

@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from skhu_pc_management.ports.auto_shutdown_cancel_shortcut import AutoShutdownCancelShortcut
 from skhu_pc_management.ports.command_runner import CommandRunner
 
 
@@ -19,6 +20,7 @@ SHERB_NOSOUND = 0x00000004
 @dataclass(frozen=True)
 class WindowsSystemMaintenance:
     command_runner: CommandRunner
+    auto_shutdown_cancel_shortcut: AutoShutdownCancelShortcut | None = None
 
     def empty_recycle_bin(self) -> int:
         shell32 = ctypes.windll.shell32
@@ -93,6 +95,11 @@ catch {
         if not output.strip():
             raise RuntimeError("작업 스케줄러 등록 결과를 확인할 수 없습니다.")
         if "__OK__" in output:
+            if self.auto_shutdown_cancel_shortcut is not None:
+                try:
+                    self.auto_shutdown_cancel_shortcut.install()
+                except Exception as exc:
+                    raise RuntimeError(f"자동종료 작업은 등록됐지만 취소 바로가기 복사에 실패했습니다: {exc}") from exc
             return True
         error_prefix = "__ERROR__"
         if error_prefix in output:

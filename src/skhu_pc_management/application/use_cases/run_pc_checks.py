@@ -13,6 +13,7 @@ from skhu_pc_management.ports.browser_data_reader import BrowserDataReader
 from skhu_pc_management.ports.check_provider import CheckProvider
 from skhu_pc_management.ports.installed_program_reader import InstalledProgramReader
 from skhu_pc_management.ports.latest_version_provider import LatestVersionProvider
+from skhu_pc_management.ports.auto_shutdown_cancel_shortcut import AutoShutdownCancelShortcut
 from skhu_pc_management.ports.power_settings_reader import PowerSettingsReader
 from skhu_pc_management.ports.recycle_bin_reader import RecycleBinReader
 from skhu_pc_management.ports.scheduled_task_reader import ScheduledTaskReader
@@ -209,6 +210,7 @@ class PowerSettingsCheck:
 @dataclass(frozen=True)
 class AutoShutdownScheduleCheck:
     scheduled_task_reader: ScheduledTaskReader
+    cancel_shortcut_checker: AutoShutdownCancelShortcut | None = None
     task_name: str = "23시 자동 종료"
 
     def run(self) -> CheckResult:
@@ -250,12 +252,44 @@ class AutoShutdownScheduleCheck:
                 raw_value=task,
             )
 
+        if self.cancel_shortcut_checker is not None:
+            shortcut_status = self.cancel_shortcut_checker.check()
+            if shortcut_status.error:
+                status = (
+                    CheckStatus.UNKNOWN
+                    if shortcut_status.error.startswith("자동종료 취소 바로가기 상태를 확인할 수 없습니다")
+                    else CheckStatus.WARNING
+                )
+                return CheckResult(
+                    check_id="auto_shutdown_schedule",
+                    label="23시 자동종료 스케줄 점검",
+                    category=CheckCategory.SCHEDULED_TASK,
+                    status=status,
+                    message=shortcut_status.error,
+                    detail=f"원본: {shortcut_status.source_path} / 바탕화면: {shortcut_status.desktop_path}",
+                    raw_value={"task": task, "shortcut": shortcut_status},
+                )
+            if not shortcut_status.matches:
+                return CheckResult(
+                    check_id="auto_shutdown_schedule",
+                    label="23시 자동종료 스케줄 점검",
+                    category=CheckCategory.SCHEDULED_TASK,
+                    status=CheckStatus.WARNING,
+                    message="바탕화면의 23시 자동종료 취소.lnk가 리소스 원본과 다릅니다.",
+                    detail=f"원본: {shortcut_status.source_path} / 바탕화면: {shortcut_status.desktop_path}",
+                    raw_value={"task": task, "shortcut": shortcut_status},
+                )
+
         return CheckResult(
             check_id="auto_shutdown_schedule",
             label="23시 자동종료 스케줄 점검",
             category=CheckCategory.SCHEDULED_TASK,
             status=CheckStatus.OK,
-            message="23시 자동종료 스케줄이 정상 등록되어 있습니다.",
+            message=(
+                "23시 자동종료 스케줄과 취소 바로가기가 정상입니다."
+                if self.cancel_shortcut_checker is not None
+                else "23시 자동종료 스케줄이 정상 등록되어 있습니다."
+            ),
             raw_value=task,
         )
 
