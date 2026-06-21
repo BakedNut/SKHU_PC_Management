@@ -9,7 +9,6 @@ REG_DWORD = "REG_DWORD"
 REG_STRING = "REG_SZ"
 
 UPDATE_USER_PARAMETERS_COMMAND = ("RUNDLL32.EXE", "user32.dll,UpdatePerUserSystemParameters")
-DISABLE_PASSWORD_EXPIRATION_COMMAND = ("net", "accounts", "/maxpwage:unlimited")
 STOP_EXPLORER_COMMAND = ("taskkill", "/F", "/IM", "explorer.exe")
 START_EXPLORER_COMMAND = ("explorer.exe",)
 
@@ -321,7 +320,6 @@ DEFAULT_SETTING_DEFINITIONS: tuple[SettingDefinition, ...] = (
     SettingDefinition(
         setting_id="disable_password_expiration",
         name="사용자 계정 암호 만료 비활성화",
-        post_commands=(DISABLE_PASSWORD_EXPIRATION_COMMAND,),
         requires_user_parameter_update=False,
     ),
     SettingDefinition(

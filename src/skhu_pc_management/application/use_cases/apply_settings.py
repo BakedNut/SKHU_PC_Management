@@ -92,7 +92,15 @@ class ApplySettings:
                 )
             return self.system_settings_actions.execute(definition.setting_id, definition.name)
 
-        if definition.setting_id == "disable_password_expiration" and self.system_settings_actions is not None:
+        if definition.setting_id == "disable_password_expiration":
+            if self.system_settings_actions is None:
+                return ApplyResult(
+                    setting_id=definition.setting_id,
+                    name=definition.name,
+                    success=False,
+                    status="failed",
+                    message="사용자 계정 암호 만료 비활성화 기능이 구성되지 않았습니다.",
+                )
             return self.system_settings_actions.execute(definition.setting_id, definition.name)
 
         if definition.setting_id == "set_taskbar_icons":
