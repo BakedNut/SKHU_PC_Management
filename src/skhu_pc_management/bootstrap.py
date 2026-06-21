@@ -69,6 +69,10 @@ from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcIn
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
 
 
+DEFAULT_MAX_RETRY_COUNT = 3
+DEFAULT_RETRY_DELAY_SECONDS = 5
+
+
 @dataclass(frozen=True)
 class InfrastructureContainer:
     registry: WinregRegistry
@@ -253,7 +257,10 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
     )
 
 
-def create_view_models(use_cases: UseCaseContainer) -> ViewModelContainer:
+def create_view_models(
+    use_cases: UseCaseContainer,
+    infra: InfrastructureContainer,
+) -> ViewModelContainer:
     return ViewModelContainer(
         pc_info=PcInfoViewModel(use_cases.load_pc_info, use_cases.rename_pc),
         settings=SettingsViewModel(
@@ -279,6 +286,8 @@ def create_view_models(use_cases: UseCaseContainer) -> ViewModelContainer:
             use_cases.list_installed_programs,
             use_cases.build_agent_report,
             use_cases.send_agent_report,
+            max_retry_count=_resolve_max_retry_count(infra.agent_config),
+            retry_delay_seconds=_resolve_retry_delay_seconds(infra.agent_config),
         ),
     )
 
@@ -300,7 +309,7 @@ def create_main_window() -> MainWindow:
     safety_guard = create_safety_guard(test_mode)
     infra = create_infrastructure()
     use_cases = create_use_cases(infra, safety_guard)
-    view_models = create_view_models(use_cases)
+    view_models = create_view_models(use_cases, infra)
     startup_coordinator = create_startup_coordinator(infra, view_models)
 
     return MainWindow(
@@ -384,3 +393,17 @@ def _load_agent_config_safely() -> AgentConfig | None:
         return load_agent_config()
     except FileNotFoundError:
         return None
+
+
+def _resolve_max_retry_count(agent_config: AgentConfig | None) -> int:
+    if agent_config is None:
+        return DEFAULT_MAX_RETRY_COUNT
+
+    return agent_config.max_retry_count
+
+
+def _resolve_retry_delay_seconds(agent_config: AgentConfig | None) -> int:
+    if agent_config is None:
+        return DEFAULT_RETRY_DELAY_SECONDS
+
+    return agent_config.retry_delay_seconds

@@ -10,6 +10,8 @@ class AgentConfig:
     agent_api_key: str
     timeout_seconds: int = 10
     auto_send_on_startup: bool = False
+    max_retry_count: int = 3
+    retry_delay_seconds: int = 5
 
 
 def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
@@ -28,6 +30,8 @@ def load_agent_config(path: str | Path = "config.json") -> AgentConfig:
         agent_api_key=str(data["agentApiKey"]),
         timeout_seconds=int(data.get("timeoutSeconds", 10)),
         auto_send_on_startup=bool(data.get("autoSendOnStartup", False)),
+        max_retry_count=max(1, int(data.get("maxRetryCount", 3))),
+        retry_delay_seconds=max(0, int(data.get("retryDelaySeconds", 5))),
     )
 
 
