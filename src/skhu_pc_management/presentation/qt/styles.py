@@ -210,6 +210,14 @@ QLabel#settingBadge[tone="info"] {
     border-color: #BFDBFE;
     color: #1D4ED8;
 }
+QFrame#settingsSection[state="disabled"] QLabel#settingBadge[tone="info"] {
+    background: #EFF6FF;
+    border-color: #BFDBFE;
+    color: #1D4ED8;
+}
+QFrame#settingsSection[state="disabled"] QLabel#sectionTitle {
+    color: #111827;
+}
 QLabel#sectionDisabledHint {
     background: #F1F5F9;
     border: 1px solid #E2E8F0;
