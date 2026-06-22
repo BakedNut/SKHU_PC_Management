@@ -18,6 +18,7 @@ class AgentReportPanel(QWidget):
         super().__init__()
         self._view_model = view_model
         self._busy_coordinator = busy_coordinator
+        self._view_model.refresh_worker_token_status()
 
         self.status_label = QLabel(view_model.status_message)
         self.status_label.setObjectName("mutedText")
@@ -29,6 +30,7 @@ class AgentReportPanel(QWidget):
         self.last_sent_at = ReadOnlyField(view_model.last_sent_at)
         self.last_report_id = ReadOnlyField(view_model.last_report_id)
         self.last_match_status = ReadOnlyField(view_model.last_match_status)
+        self.worker_token_status = ReadOnlyField(view_model.worker_token_status)
         self.retry_config = ReadOnlyField(
             f"{view_model.max_retry_count}회 / {view_model.retry_delay_seconds}초 간격"
         )
@@ -47,11 +49,12 @@ class AgentReportPanel(QWidget):
         status_card.body_layout.addWidget(self.status_label)
         status_card.body_layout.addWidget(self.result_label)
 
-        detail_card = Card("전송 상태", "최근 서버 전송 결과와 재시도 설정입니다.")
+        detail_card = Card("전송 상태", "최근 서버 전송 결과와 Worker Token 감지 상태입니다.")
         detail_form = FormGrid(columns=2)
         detail_form.add_field("최근 전송 시각", self.last_sent_at)
         detail_form.add_field("최근 Report ID", self.last_report_id)
         detail_form.add_field("최근 매칭 상태", self.last_match_status)
+        detail_form.add_field("Worker Token", self.worker_token_status)
         detail_form.add_field("재시도 설정", self.retry_config)
         detail_card.body_layout.addWidget(detail_form)
 
@@ -80,11 +83,13 @@ class AgentReportPanel(QWidget):
                 self._busy_coordinator.end(self._view_model.status_message)
 
     def render(self) -> None:
+        self._view_model.refresh_worker_token_status()
         self.status_label.setText(self._view_model.status_message)
         self.result_label.setText(self._view_model.last_result_message)
         self.last_sent_at.setText(self._view_model.last_sent_at)
         self.last_report_id.setText(self._view_model.last_report_id)
         self.last_match_status.setText(self._view_model.last_match_status)
+        self.worker_token_status.setText(self._view_model.worker_token_status)
         self.retry_config.setText(
             f"{self._view_model.max_retry_count}회 / "
             f"{self._view_model.retry_delay_seconds}초 간격"

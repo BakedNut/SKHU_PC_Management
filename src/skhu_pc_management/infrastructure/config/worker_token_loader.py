@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from skhu_pc_management.infrastructure.config.agent_config_loader import (
     AgentConfig,
     resolve_runtime_path,

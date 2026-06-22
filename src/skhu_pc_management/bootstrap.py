@@ -286,6 +286,7 @@ def create_view_models(
             use_cases.list_installed_programs,
             use_cases.build_agent_report,
             use_cases.send_agent_report,
+            agent_config=infra.agent_config,
             max_retry_count=_resolve_max_retry_count(infra.agent_config),
             retry_delay_seconds=_resolve_retry_delay_seconds(infra.agent_config),
         ),

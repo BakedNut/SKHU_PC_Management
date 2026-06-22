@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from skhu_pc_management.infrastructure.config.agent_config_loader import AgentConfig
+from skhu_pc_management.infrastructure.config.worker_token_loader import load_worker_token
 from skhu_pc_management.infrastructure.logging.agent_logger import create_agent_logger
 
 
@@ -16,21 +18,42 @@ class AgentReportViewModel:
     list_installed_programs_use_case: Any
     build_agent_report_use_case: Any
     send_agent_report_use_case: Any | None
+    agent_config: AgentConfig | None = None
 
     status_message: str = "서버 전송 대기 중입니다."
     last_result_message: str = "-"
     last_sent_at: str = "-"
     last_report_id: str = "-"
     last_match_status: str = "-"
+    worker_token_status: str = "확인 안 됨"
     is_busy: bool = False
     logger: Any = None
 
     max_retry_count: int = 3
     retry_delay_seconds: int = 5
 
+    def refresh_worker_token_status(self) -> None:
+        if self.agent_config is None:
+            self.worker_token_status = "config.json 없음"
+            return
+
+        if self.agent_config.worker_token_path is None:
+            self.worker_token_status = "workerTokenPath 미설정"
+            return
+
+        try:
+            worker_token = load_worker_token(self.agent_config)
+        except Exception:
+            self.worker_token_status = "읽기 실패"
+            return
+
+        self.worker_token_status = "감지됨" if worker_token else "파일 없음 또는 비어 있음"
+
     def send_report(self) -> None:
         if self.logger is None:
             self.logger = create_agent_logger()
+
+        self.refresh_worker_token_status()
 
         if self.is_busy:
             self.status_message = "다른 작업이 진행 중입니다."
