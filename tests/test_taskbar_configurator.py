@@ -5,7 +5,20 @@ from pathlib import Path
 from skhu_pc_management.application.safety import REAL_TASKBAR_APPLY_DISABLED_MESSAGE, SafetyGuard
 from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
 from skhu_pc_management.application.use_cases.validate_taskbar_resources import ValidateTaskbarResources
+from skhu_pc_management.domain.resources.models import ResourceValidationResult, TaskbarApplyResult
 from skhu_pc_management.infrastructure.windows.windows_taskbar_configurator import WindowsTaskbarConfigurator
+
+
+class FakeTaskbarConfigurator:
+    def __init__(self) -> None:
+        self.apply_requests: list[bool] = []
+
+    def validate_resources(self) -> ResourceValidationResult:
+        return ResourceValidationResult(success=True, message="ok")
+
+    def apply_taskbar_layout(self, dry_run: bool = True) -> TaskbarApplyResult:
+        self.apply_requests.append(dry_run)
+        return TaskbarApplyResult(success=True, message="ok", dry_run=dry_run)
 
 
 class FakeCommandRunner:
@@ -31,6 +44,29 @@ class FakeResourceResolver:
         if not path.exists():
             raise FileNotFoundError(path)
         return path
+
+
+def test_apply_taskbar_layout_defaults_to_dry_run() -> None:
+    configurator = FakeTaskbarConfigurator()
+
+    result = ApplyTaskbarLayout(configurator).execute()
+
+    assert result.success is True
+    assert result.dry_run is True
+    assert configurator.apply_requests == [True]
+
+
+def test_apply_taskbar_layout_can_run_real_apply_when_allowed() -> None:
+    configurator = FakeTaskbarConfigurator()
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    assert result.success is True
+    assert result.dry_run is False
+    assert configurator.apply_requests == [False]
 
 
 def test_taskbar_validation_fails_when_reg_file_is_missing(tmp_path: Path) -> None:
