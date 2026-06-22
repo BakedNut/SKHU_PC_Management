@@ -14,12 +14,12 @@ class SettingsViewModel:
     apply_taskbar_layout_use_case: Any | None = None
     definitions: tuple[SettingDefinition, ...] = DEFAULT_SETTING_DEFINITIONS
     status_message: str = "설정 상태를 확인하지 않았습니다."
-    result_rows: list[tuple[str, str, str, str]] = field(default_factory=list)
+    result_rows: list[tuple[str, str, str]] = field(default_factory=list)
     is_busy: bool = False
 
     @property
     def warning_count(self) -> int:
-        return sum(1 for row in self.result_rows if len(row) > 2 and row[2] in {"미설정", "값 없음", "확인 불가", "상태 확인 미구현", "확인 실패"})
+        return sum(1 for row in self.result_rows if len(row) > 1 and row[1] in {"미설정", "값 없음", "확인 불가", "상태 확인 미구현", "확인 실패"})
 
     @property
     def summary_text(self) -> str:
@@ -43,7 +43,6 @@ class SettingsViewModel:
             self.result_rows = [
                 (
                     status.label or status.name,
-                    "-",
                     _display_status(status.status_text),
                     _status_detail(status),
                 )
@@ -71,44 +70,18 @@ class SettingsViewModel:
             selected_ids = list(setting_ids)
             display_ids = list(display_setting_ids) if display_setting_ids is not None else self.all_setting_ids()
             result = self.apply_settings_use_case.execute(selected_ids)
-            statuses_by_id = {}
             try:
                 statuses = self.check_settings_status_use_case.execute(display_ids)
-                statuses_by_id = {status.setting_id: status for status in statuses}
+                self.result_rows = [
+                    (
+                        status.label or status.name,
+                        _display_status(status.status_text),
+                        _status_detail(status),
+                    )
+                    for status in statuses
+                ]
             except Exception as exc:
                 self.status_message = f"설정 적용 후 상태 재확인 실패: {exc}"
-
-            self.result_rows = []
-            apply_results_by_id = {item.setting_id: item for item in result.results}
-            definitions_by_id = {definition.setting_id: definition for definition in self.definitions}
-            for setting_id in display_ids:
-                item = apply_results_by_id.get(setting_id)
-                current_status = statuses_by_id.get(setting_id)
-                definition = definitions_by_id.get(setting_id)
-                name = (
-                    (current_status.label or current_status.name)
-                    if current_status is not None
-                    else item.name
-                    if item is not None
-                    else definition.name
-                    if definition is not None
-                    else setting_id
-                )
-                detail_parts = []
-                if item is not None:
-                    detail_parts.append(_display_message(item.message))
-                if current_status is not None:
-                    status_detail = _status_detail(current_status)
-                    if status_detail:
-                        detail_parts.append(status_detail)
-                self.result_rows.append(
-                    (
-                        name,
-                        _display_status(item.status) if item is not None else "-",
-                        _display_status(current_status.status_text) if current_status else "확인 불가",
-                        " / ".join(part for part in detail_parts if part),
-                    )
-                )
             self.status_message = (
                 f"설정 적용 완료: 성공 {result.success_count}, 실패 {result.failure_count}, 스킵 {result.skipped_count}"
             )
@@ -150,9 +123,9 @@ class SettingsViewModel:
         self.status_message = "작업표시줄 설정 적용 계획을 확인하는 중입니다..."
         try:
             result = self.apply_taskbar_layout_use_case.execute(dry_run=dry_run)
-            self.result_rows = [(action, "예정", "-", "") for action in result.planned_actions]
+            self.result_rows = [(action, "예정", "") for action in result.planned_actions]
             if result.reg_file is not None:
-                self.result_rows.append(("TaskBar.reg", "확인", "-", str(result.reg_file)))
+                self.result_rows.append(("TaskBar.reg", "확인", str(result.reg_file)))
             self.status_message = result.message
         except Exception as exc:
             self.result_rows = []
@@ -203,11 +176,11 @@ def _status_detail(status: Any) -> str:
     return _format_value(value)
 
 
-def _taskbar_validation_rows(result: Any) -> list[tuple[str, str, str, str]]:
-    rows: list[tuple[str, str, str, str]] = []
-    rows.append(("Resources", "확인" if result.resources_root else "없음", "-", "" if result.resources_root is None else str(result.resources_root)))
-    rows.append(("TaskBar.reg", "확인" if result.reg_file and result.reg_file.exists() else "없음", "-", "" if result.reg_file is None else str(result.reg_file)))
-    rows.append(("TaskBar 바로가기", f"{len(result.shortcut_files)}개", "-", ", ".join(path.name for path in result.shortcut_files)))
+def _taskbar_validation_rows(result: Any) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    rows.append(("Resources", "확인" if result.resources_root else "없음", "" if result.resources_root is None else str(result.resources_root)))
+    rows.append(("TaskBar.reg", "확인" if result.reg_file and result.reg_file.exists() else "없음", "" if result.reg_file is None else str(result.reg_file)))
+    rows.append(("TaskBar 바로가기", f"{len(result.shortcut_files)}개", ", ".join(path.name for path in result.shortcut_files)))
     for warning in result.warnings:
-        rows.append(("경고", "주의", "-", warning))
+        rows.append(("경고", "주의", warning))
     return rows

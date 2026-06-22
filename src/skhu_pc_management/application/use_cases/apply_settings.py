@@ -165,19 +165,11 @@ class ApplySettings:
             self._run_post_command(STOP_EXPLORER_COMMAND, post_command_failures)
             self._run_post_command(START_EXPLORER_COMMAND, post_command_failures)
 
-        if not post_command_failures:
-            return
-
-        message = "후처리 경고: Explorer 재시작 확인 필요 (" + "; ".join(post_command_failures) + ")"
-        for index, result in enumerate(results):
-            if result.success:
-                results[index] = ApplyResult(
-                    setting_id=result.setting_id,
-                    name=result.name,
-                    success=True,
-                    status=result.status,
-                    message=f"{result.message} / {message}",
-                )
+        # Post commands only refresh Shell/UI state. Registry and file status
+        # providers determine whether settings are actually configured, so
+        # best-effort post command failures are intentionally not surfaced in
+        # per-setting results.
+        return
 
     def _run_post_command(self, command: tuple[str, ...], failures: list[str]) -> None:
         try:
