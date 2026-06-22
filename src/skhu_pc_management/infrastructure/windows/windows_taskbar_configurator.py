@@ -11,6 +11,9 @@ from skhu_pc_management.ports.command_runner import CommandRunner
 from skhu_pc_management.ports.resource_resolver import ResourceResolver
 
 
+CHROME_TASKBAR_SHORTCUT_NAME = "Google Chrome.lnk"
+
+
 @dataclass(frozen=True)
 class WindowsTaskbarConfigurator:
     resource_resolver: ResourceResolver
@@ -145,7 +148,7 @@ def _planned_actions(validation: ResourceValidationResult) -> tuple[str, ...]:
         actions.append(f"TaskBar 바로가기 원본 확인: {validation.taskbar_dir}")
     for shortcut in validation.shortcut_files:
         if _is_chrome_shortcut(shortcut):
-            actions.append("Chrome 바로가기 동적 resolve 예정: 시작 메뉴 또는 chrome.exe")
+            actions.append("Google Chrome.lnk 동적 생성 예정: chrome.exe 기반")
             continue
         actions.append(f"복사 예정: {shortcut.name}")
     if validation.reg_file is not None:
@@ -162,26 +165,80 @@ def _taskbar_target_dir() -> Path:
 
 
 def _apply_chrome_shortcut(command_runner: CommandRunner, target_dir: Path) -> str | None:
-    target_shortcut = target_dir / "Chrome.lnk"
+    target_shortcut = target_dir / CHROME_TASKBAR_SHORTCUT_NAME
+    chrome_exe = _find_chrome_exe()
+    if chrome_exe is not None:
+        try:
+            _create_chrome_shortcut(command_runner, chrome_exe, target_shortcut)
+            _ensure_valid_chrome_shortcut(command_runner, target_shortcut)
+            return None
+        except Exception:
+            _safe_unlink(target_shortcut)
+            return "Chrome 바로가기 생성 실패로 Chrome 고정을 건너뜀"
+
     existing_shortcut = _find_existing_chrome_shortcut()
     if existing_shortcut is not None:
-        shutil.copy2(existing_shortcut, target_shortcut)
-        return None
+        try:
+            if _shortcut_target_is_valid(command_runner, existing_shortcut):
+                shutil.copy2(existing_shortcut, target_shortcut)
+                _ensure_valid_chrome_shortcut(command_runner, target_shortcut)
+                return None
+        except Exception:
+            _safe_unlink(target_shortcut)
+            return "Chrome 바로가기 대상이 유효하지 않아 Chrome 고정을 건너뜀"
 
-    chrome_exe = _find_chrome_exe()
-    if chrome_exe is None:
-        return "Chrome 설치 또는 바로가기를 찾을 수 없어 Chrome 고정을 건너뜀"
+    _safe_unlink(target_shortcut)
+    return "Chrome 설치 또는 유효한 바로가기를 찾을 수 없어 Chrome 고정을 건너뜀"
 
+
+def _ensure_valid_chrome_shortcut(command_runner: CommandRunner, shortcut_path: Path) -> None:
+    if not shortcut_path.is_file():
+        raise RuntimeError("Chrome 바로가기 파일이 생성되지 않았습니다.")
+    if not _shortcut_target_is_valid(command_runner, shortcut_path):
+        raise RuntimeError("Chrome 바로가기 대상이 유효하지 않습니다.")
+
+
+def _shortcut_target_is_valid(command_runner: CommandRunner, shortcut_path: Path) -> bool:
+    target = _read_shortcut_target(command_runner, shortcut_path)
+    return bool(target and Path(target).is_file())
+
+
+def _read_shortcut_target(command_runner: CommandRunner, shortcut_path: Path) -> str | None:
+    script = f"""
+$Shell = New-Object -ComObject WScript.Shell
+$Shortcut = $Shell.CreateShortcut({_ps_single_quoted(str(shortcut_path))})
+$Shortcut.TargetPath
+""".strip()
+    output = command_runner.run(
+        (
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            _powershell_encoded_command(script),
+        )
+    )
+    target = output.strip()
+    return target or None
+
+
+def _safe_unlink(path: Path) -> None:
     try:
-        _create_chrome_shortcut(command_runner, chrome_exe, target_shortcut)
+        path.unlink()
+    except FileNotFoundError:
+        pass
     except Exception:
-        return "Chrome 바로가기 생성 실패로 Chrome 고정을 건너뜀"
-    return None
+        pass
 
 
 def _is_chrome_shortcut(path: Path) -> bool:
-    name = path.stem.lower().replace(" ", "")
-    return name in {"chrome", "googlechrome"}
+    return _is_chrome_shortcut_name(path.name)
+
+
+def _is_chrome_shortcut_name(name: str) -> bool:
+    stem = Path(name).stem.lower().replace(" ", "")
+    return stem in {"chrome", "googlechrome"}
 
 
 def _find_existing_chrome_shortcut() -> Path | None:
@@ -222,6 +279,7 @@ $Shortcut = $Shell.CreateShortcut({_ps_single_quoted(str(shortcut_path))})
 $Shortcut.TargetPath = {_ps_single_quoted(str(chrome_exe))}
 $Shortcut.WorkingDirectory = {_ps_single_quoted(str(chrome_exe.parent))}
 $Shortcut.IconLocation = {_ps_single_quoted(str(chrome_exe) + ",0")}
+$Shortcut.Description = 'Google Chrome'
 $Shortcut.Save()
 """.strip()
     command_runner.run(

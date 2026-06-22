@@ -45,6 +45,7 @@ from skhu_pc_management.infrastructure.windows.subprocess_command_runner import 
 from skhu_pc_management.infrastructure.windows.windows_admin_privilege_checker import WindowsAdminPrivilegeChecker
 from skhu_pc_management.infrastructure.windows.windows_clipboard import WindowsClipboard
 from skhu_pc_management.infrastructure.windows.windows_pc_renamer import WindowsPcRenamer
+from skhu_pc_management.infrastructure.windows.windows_office_launcher import WindowsOfficeLauncher
 from skhu_pc_management.infrastructure.windows.windows_process_launcher import WindowsProcessLauncher
 from skhu_pc_management.infrastructure.windows.windows_program_launcher import WindowsProgramLauncher
 from skhu_pc_management.infrastructure.windows.windows_scheduled_task_reader import WindowsScheduledTaskReader
@@ -84,6 +85,7 @@ class InfrastructureContainer:
     network_configurator: NetshNetworkConfigurator
     taskbar_configurator: WindowsTaskbarConfigurator
     pc_renamer: WindowsPcRenamer
+    office_launcher: WindowsOfficeLauncher
     program_launcher: WindowsProgramLauncher
     system_maintenance: WindowsSystemMaintenance
     system_settings_operator: WindowsSystemSettingsOperator
@@ -153,6 +155,7 @@ def create_infrastructure() -> InfrastructureContainer:
     network_configurator = NetshNetworkConfigurator(command_runner)
     taskbar_configurator = WindowsTaskbarConfigurator(resource_resolver, command_runner)
     pc_renamer = WindowsPcRenamer(command_runner)
+    office_launcher = WindowsOfficeLauncher(registry, process_launcher)
     program_launcher = WindowsProgramLauncher(registry, process_launcher)
     auto_shutdown_cancel_shortcut = WindowsAutoShutdownCancelShortcut(resource_resolver)
     system_maintenance = WindowsSystemMaintenance(command_runner, auto_shutdown_cancel_shortcut)
@@ -171,6 +174,7 @@ def create_infrastructure() -> InfrastructureContainer:
         network_configurator=network_configurator,
         taskbar_configurator=taskbar_configurator,
         pc_renamer=pc_renamer,
+        office_launcher=office_launcher,
         program_launcher=program_launcher,
         system_maintenance=system_maintenance,
         system_settings_operator=system_settings_operator,
@@ -191,7 +195,7 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
     setting_status_providers = {
         "set_default_wallpaper": DefaultWallpaperStatusProvider(infra.registry),
         "delete_edge_shortcut": EdgeShortcutStatusProvider(infra.registry),
-        "set_taskbar_icons": TaskbarLayoutStatusProvider(infra.resource_resolver),
+        "set_taskbar_icons": TaskbarLayoutStatusProvider(infra.resource_resolver, infra.command_runner),
         "disable_password_expiration": PasswordExpirationStatusProvider(infra.command_runner),
     }
 
@@ -253,7 +257,7 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
         activate_office=ActivateOffice(
             infra.product_key_provider,
             infra.clipboard,
-            infra.process_launcher,
+            infra.office_launcher,
             safety_guard=safety_guard,
         ),
         build_agent_report=build_agent_report,

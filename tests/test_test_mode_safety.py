@@ -85,6 +85,15 @@ class RecordingProcessLauncher:
         self.launches.append((executable, tuple(args)))
 
 
+class RecordingOfficeLauncher:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def launch_excel(self) -> str:
+        self.calls += 1
+        return "excel.exe"
+
+
 class RecordingTaskbarConfigurator:
     def __init__(self) -> None:
         self.apply_requests: list[bool] = []
@@ -180,10 +189,11 @@ def test_test_mode_blocks_activation_without_key_clipboard_or_process_calls() ->
     provider = RecordingProductKeyProvider()
     clipboard = RecordingClipboard()
     launcher = RecordingProcessLauncher()
+    office_launcher = RecordingOfficeLauncher()
     guard = SafetyGuard(test_mode=True)
 
     windows_result = ActivateWindows(provider, clipboard, launcher, safety_guard=guard).execute("windows_11")
-    office_result = ActivateOffice(provider, clipboard, launcher, safety_guard=guard).execute("2024")
+    office_result = ActivateOffice(provider, clipboard, office_launcher, safety_guard=guard).execute("2024")
 
     assert windows_result.success is False
     assert windows_result.message == TEST_MODE_DISABLED_MESSAGE
@@ -193,6 +203,7 @@ def test_test_mode_blocks_activation_without_key_clipboard_or_process_calls() ->
     assert provider.office_requests == []
     assert clipboard.texts == []
     assert launcher.launches == []
+    assert office_launcher.calls == 0
 
 
 def test_test_mode_allows_taskbar_dry_run_but_blocks_real_apply() -> None:
