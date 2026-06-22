@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
+import re
 
 from skhu_pc_management.application.safety import REAL_TASKBAR_APPLY_DISABLED_MESSAGE, SafetyGuard
 from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
@@ -22,11 +24,23 @@ class FakeTaskbarConfigurator:
 
 
 class FakeCommandRunner:
-    def __init__(self) -> None:
+    def __init__(self, shortcut_targets: dict[Path, Path] | None = None) -> None:
         self.commands: list[tuple[str, ...]] = []
+        self.shortcut_targets = {str(key): str(value) for key, value in (shortcut_targets or {}).items()}
 
     def run(self, command: tuple[str, ...]) -> str:
         self.commands.append(tuple(command))
+        if command and command[0] == "powershell" and "-EncodedCommand" in command:
+            script = _decode_powershell_command(command)
+            shortcut_path = _script_shortcut_path(script)
+            if "$Shortcut.Save()" in script:
+                target_path = _script_target_path(script)
+                if shortcut_path is not None and target_path is not None:
+                    Path(shortcut_path).write_text("generated chrome shortcut", encoding="utf-8")
+                    self.shortcut_targets[shortcut_path] = target_path
+                return ""
+            if shortcut_path is not None and "$Shortcut.TargetPath" in script:
+                return self.shortcut_targets.get(shortcut_path, "")
         return ""
 
 
@@ -155,7 +169,7 @@ def test_taskbar_dry_run_reports_chrome_dynamic_resolve_without_copying(tmp_path
 
     assert result.success is True
     assert result.dry_run is True
-    assert any("Chrome 바로가기 동적 resolve 예정" in action for action in result.planned_actions)
+    assert any("Google Chrome.lnk 동적 생성 예정" in action for action in result.planned_actions)
     assert not appdata.exists()
 
 
@@ -227,7 +241,7 @@ def test_taskbar_real_apply_uses_temp_appdata_and_fake_commands(tmp_path: Path, 
     ]
 
 
-def test_taskbar_real_apply_uses_start_menu_chrome_shortcut_instead_of_resource(tmp_path: Path, monkeypatch) -> None:
+def test_taskbar_real_apply_uses_valid_start_menu_chrome_shortcut_as_fallback(tmp_path: Path, monkeypatch) -> None:
     resources = tmp_path / "resources"
     taskbar_dir = resources / "TaskBar"
     taskbar_dir.mkdir(parents=True)
@@ -239,11 +253,64 @@ def test_taskbar_real_apply_uses_start_menu_chrome_shortcut_instead_of_resource(
     program_data = tmp_path / "ProgramData"
     start_menu = program_data / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Google"
     start_menu.mkdir(parents=True)
-    (start_menu / "Google Chrome.lnk").write_text("local chrome", encoding="utf-8")
+    start_menu_shortcut = start_menu / "Google Chrome.lnk"
+    start_menu_shortcut.write_text("local chrome", encoding="utf-8")
+    chrome_exe = tmp_path / "ChromeInstall" / "chrome.exe"
+    chrome_exe.parent.mkdir(parents=True)
+    chrome_exe.write_text("chrome", encoding="utf-8")
 
+    appdata = tmp_path / "AppData" / "Roaming"
+    target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target_shortcut = target_dir / "Google Chrome.lnk"
+    monkeypatch.setenv("ProgramData", str(program_data))
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "ProgramFiles"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "ProgramFilesX86"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+    command_runner = FakeCommandRunner({start_menu_shortcut: chrome_exe, target_shortcut: chrome_exe})
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    assert result.success is True
+    assert (target_dir / "Google Chrome.lnk").read_text(encoding="utf-8") == "local chrome"
+    assert not (target_dir / "Chrome.lnk").exists()
+    assert (target_dir / "PotPlayer.lnk").read_text(encoding="utf-8") == "potplayer"
+    assert len(command_runner.commands) == 5
+    assert command_runner.commands[0][0] == "powershell"
+    assert command_runner.commands[1][0] == "powershell"
+    assert command_runner.commands[2:] == [
+        ("reg", "import", str(reg_file)),
+        ("taskkill", "/F", "/IM", "explorer.exe"),
+        ("explorer.exe",),
+    ]
+
+
+def test_taskbar_real_apply_prefers_chrome_exe_over_start_menu_shortcut(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    (taskbar_dir / "Chrome.lnk").write_text("packaged chrome", encoding="utf-8")
+
+    program_data = tmp_path / "ProgramData"
+    start_menu = program_data / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    start_menu.mkdir(parents=True)
+    (start_menu / "Google Chrome.lnk").write_text("local chrome", encoding="utf-8")
+    program_files = tmp_path / "ProgramFiles"
+    chrome_exe = program_files / "Google" / "Chrome" / "Application" / "chrome.exe"
+    chrome_exe.parent.mkdir(parents=True)
+    chrome_exe.write_text("chrome", encoding="utf-8")
     appdata = tmp_path / "AppData" / "Roaming"
     monkeypatch.setenv("ProgramData", str(program_data))
     monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "ProgramFilesX86"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
     command_runner = FakeCommandRunner()
     configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
 
@@ -254,13 +321,10 @@ def test_taskbar_real_apply_uses_start_menu_chrome_shortcut_instead_of_resource(
 
     target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
     assert result.success is True
-    assert (target_dir / "Chrome.lnk").read_text(encoding="utf-8") == "local chrome"
-    assert (target_dir / "PotPlayer.lnk").read_text(encoding="utf-8") == "potplayer"
-    assert command_runner.commands == [
-        ("reg", "import", str(reg_file)),
-        ("taskkill", "/F", "/IM", "explorer.exe"),
-        ("explorer.exe",),
-    ]
+    assert (target_dir / "Google Chrome.lnk").read_text(encoding="utf-8") == "generated chrome shortcut"
+    assert not (target_dir / "Chrome.lnk").exists()
+    assert command_runner.commands[0][0] == "powershell"
+    assert command_runner.commands[1][0] == "powershell"
 
 
 def test_taskbar_real_apply_creates_chrome_shortcut_from_exe_when_start_menu_shortcut_is_missing(
@@ -295,11 +359,57 @@ def test_taskbar_real_apply_creates_chrome_shortcut_from_exe_when_start_menu_sho
     assert result.success is True
     assert command_runner.commands[0][0] == "powershell"
     assert "-EncodedCommand" in command_runner.commands[0]
-    assert command_runner.commands[1] == ("reg", "import", str(reg_file))
-    assert command_runner.commands[2:] == [
+    assert command_runner.commands[1][0] == "powershell"
+    assert command_runner.commands[2] == ("reg", "import", str(reg_file))
+    assert command_runner.commands[3:] == [
         ("taskkill", "/F", "/IM", "explorer.exe"),
         ("explorer.exe",),
     ]
+    target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    assert (target_dir / "Google Chrome.lnk").exists()
+    assert not (target_dir / "Chrome.lnk").exists()
+
+
+def test_taskbar_real_apply_removes_generated_chrome_shortcut_when_target_validation_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    (taskbar_dir / "Google Chrome.lnk").write_text("packaged chrome", encoding="utf-8")
+    program_files = tmp_path / "ProgramFiles"
+    chrome_exe = program_files / "Google" / "Chrome" / "Application" / "chrome.exe"
+    chrome_exe.parent.mkdir(parents=True)
+    chrome_exe.write_text("chrome", encoding="utf-8")
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "ProgramFilesX86"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+
+    class InvalidTargetCommandRunner(FakeCommandRunner):
+        def run(self, command: tuple[str, ...]) -> str:
+            output = super().run(command)
+            if command and command[0] == "powershell" and "$Shortcut.TargetPath" in _decode_powershell_command(command):
+                return str(tmp_path / "missing" / "chrome.exe")
+            return output
+
+    command_runner = InvalidTargetCommandRunner()
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    assert result.success is True
+    assert "Chrome 바로가기 생성 실패로 Chrome 고정을 건너뜀" in result.message
+    assert not (target_dir / "Google Chrome.lnk").exists()
+    assert not (target_dir / "Chrome.lnk").exists()
 
 
 def test_taskbar_real_apply_skips_missing_chrome_without_failing_static_shortcuts(tmp_path: Path, monkeypatch) -> None:
@@ -326,8 +436,9 @@ def test_taskbar_real_apply_skips_missing_chrome_without_failing_static_shortcut
 
     target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
     assert result.success is True
-    assert "Chrome 설치 또는 바로가기를 찾을 수 없어 Chrome 고정을 건너뜀" in result.message
+    assert "Chrome 설치 또는 유효한 바로가기를 찾을 수 없어 Chrome 고정을 건너뜀" in result.message
     assert not (target_dir / "Chrome.lnk").exists()
+    assert not (target_dir / "Google Chrome.lnk").exists()
     assert (target_dir / "Bandizip.lnk").read_text(encoding="utf-8") == "bandizip"
     assert command_runner.commands == [
         ("reg", "import", str(reg_file)),
@@ -390,3 +501,22 @@ def test_taskbar_real_apply_fails_when_reg_import_fails(tmp_path: Path, monkeypa
     assert result.success is False
     assert "작업표시줄 설정 적용 실패" in result.message
     assert command_runner.commands == [("reg", "import", str(reg_file))]
+
+
+def _decode_powershell_command(command: tuple[str, ...]) -> str:
+    encoded = command[command.index("-EncodedCommand") + 1]
+    return base64.b64decode(encoded).decode("utf-16le")
+
+
+def _script_shortcut_path(script: str) -> str | None:
+    match = re.search(r"\$Shell\.CreateShortcut\('((?:''|[^'])*)'\)", script)
+    if match is None:
+        return None
+    return match.group(1).replace("''", "'")
+
+
+def _script_target_path(script: str) -> str | None:
+    match = re.search(r"\$Shortcut\.TargetPath = '((?:''|[^'])*)'", script)
+    if match is None:
+        return None
+    return match.group(1).replace("''", "'")

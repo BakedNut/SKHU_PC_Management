@@ -9,6 +9,7 @@ from skhu_pc_management.application.use_cases.activate_windows import ActivateWi
 from skhu_pc_management.infrastructure.license import embedded_product_key_provider
 from skhu_pc_management.infrastructure.license.embedded_product_key_provider import EmbeddedProductKeyProvider
 from skhu_pc_management.infrastructure.license.null_product_key_provider import NullProductKeyProvider
+from skhu_pc_management.infrastructure.windows.windows_office_launcher import WindowsOfficeLauncher
 
 
 class FakeProductKeyProvider:
@@ -28,10 +29,13 @@ class FakeProductKeyProvider:
 
 
 class FakeClipboard:
-    def __init__(self) -> None:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
         self.texts: list[str] = []
 
     def set_text(self, text: str) -> None:
+        if self.error is not None:
+            raise self.error
         self.texts.append(text)
 
 
@@ -44,6 +48,33 @@ class FakeProcessLauncher:
         if self.error is not None:
             raise self.error
         self.launches.append((executable, tuple(args)))
+
+
+class FakeOfficeLauncher:
+    def __init__(self, launched_process: str = r"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE", error: Exception | None = None) -> None:
+        self.launched_process = launched_process
+        self.error = error
+        self.calls = 0
+
+    def launch_excel(self) -> str:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.launched_process
+
+
+class FakeRegistry:
+    def __init__(self, values: dict[tuple[str, str, str], object] | None = None) -> None:
+        self.values = values or {}
+
+    def read_value(self, root: str, path: str, name: str) -> object | None:
+        return self.values.get((root, path, name))
+
+    def list_subkeys(self, root: str, path: str) -> list[str]:
+        return []
+
+    def write_value(self, root: str, path: str, name: str, value: object, value_type: str) -> None:
+        raise AssertionError("not used")
 
 
 def test_windows_activation_copies_key_and_launches_slui() -> None:
@@ -66,18 +97,17 @@ def test_windows_activation_copies_key_and_launches_slui() -> None:
 def test_office_activation_copies_key_and_launches_excel() -> None:
     provider = FakeProductKeyProvider(office_key="test-office-key")
     clipboard = FakeClipboard()
-    launcher = FakeProcessLauncher()
-    excel_path = Path("EXCEL.EXE")
+    office_launcher = FakeOfficeLauncher(r"C:\Office\EXCEL.EXE")
 
-    result = ActivateOffice(provider, clipboard, launcher, excel_path=excel_path).execute("2024")
+    result = ActivateOffice(provider, clipboard, office_launcher).execute("2024")
 
     assert result.success is True
     assert result.action == "office_activation"
     assert result.copied_to_clipboard is True
-    assert result.launched_process == str(excel_path)
+    assert result.launched_process == r"C:\Office\EXCEL.EXE"
     assert provider.office_requests == ["2024"]
     assert clipboard.texts == ["test-office-key"]
-    assert launcher.launches == [(excel_path, ())]
+    assert office_launcher.calls == 1
     assert "test-office-key" not in result.message
 
 
@@ -101,7 +131,7 @@ def test_windows_activation_uses_selected_windows_10_key_kind() -> None:
 
 def test_office_activation_uses_selected_office_2024_key_kind() -> None:
     provider = FakeProductKeyProvider(office_key="office2024-secret")
-    result = ActivateOffice(provider, FakeClipboard(), FakeProcessLauncher()).execute("2024")
+    result = ActivateOffice(provider, FakeClipboard(), FakeOfficeLauncher()).execute("2024")
 
     assert result.success is True
     assert result.message == "Office 2024 제품키를 클립보드에 복사하고 Excel을 실행했습니다."
@@ -110,7 +140,7 @@ def test_office_activation_uses_selected_office_2024_key_kind() -> None:
 
 def test_office_activation_uses_selected_office_2021_key_kind() -> None:
     provider = FakeProductKeyProvider(office_key="office2021-secret")
-    result = ActivateOffice(provider, FakeClipboard(), FakeProcessLauncher()).execute("2021")
+    result = ActivateOffice(provider, FakeClipboard(), FakeOfficeLauncher()).execute("2021")
 
     assert result.success is True
     assert result.message == "Office 2021 제품키를 클립보드에 복사하고 Excel을 실행했습니다."
@@ -120,11 +150,23 @@ def test_office_activation_uses_selected_office_2021_key_kind() -> None:
 def test_office_activation_reports_missing_excel_in_korean() -> None:
     provider = FakeProductKeyProvider(office_key="office-secret")
 
-    result = ActivateOffice(provider, FakeClipboard(), FakeProcessLauncher(FileNotFoundError("missing"))).execute("2024")
+    result = ActivateOffice(provider, FakeClipboard(), FakeOfficeLauncher(error=FileNotFoundError("missing"))).execute("2024")
 
     assert result.success is False
     assert "Excel 실행 파일을 찾지 못했습니다." in result.message
     assert "제품키는 이미 클립보드에 복사되었을 수 있습니다." in result.message
+    assert "office-secret" not in result.message
+
+
+def test_office_activation_does_not_launch_excel_when_clipboard_fails() -> None:
+    provider = FakeProductKeyProvider(office_key="office-secret")
+    office_launcher = FakeOfficeLauncher()
+
+    result = ActivateOffice(provider, FakeClipboard(RuntimeError("clipboard failed")), office_launcher).execute("2024")
+
+    assert result.success is False
+    assert result.copied_to_clipboard is False
+    assert office_launcher.calls == 0
     assert "office-secret" not in result.message
 
 
@@ -142,7 +184,7 @@ def test_windows_activation_warns_clipboard_may_contain_key_when_launch_fails() 
 def test_office_activation_warns_clipboard_may_contain_key_when_launch_fails() -> None:
     provider = FakeProductKeyProvider(office_key="office-secret")
 
-    result = ActivateOffice(provider, FakeClipboard(), FakeProcessLauncher(RuntimeError("launch failed"))).execute("2024")
+    result = ActivateOffice(provider, FakeClipboard(), FakeOfficeLauncher(error=RuntimeError("launch failed"))).execute("2024")
 
     assert result.success is False
     assert result.copied_to_clipboard is True
@@ -164,14 +206,82 @@ def test_windows_activation_returns_failure_when_key_is_missing() -> None:
 
 def test_office_activation_returns_failure_when_key_is_missing() -> None:
     clipboard = FakeClipboard()
-    launcher = FakeProcessLauncher()
+    office_launcher = FakeOfficeLauncher()
 
-    result = ActivateOffice(FakeProductKeyProvider(office_key=None), clipboard, launcher).execute()
+    result = ActivateOffice(FakeProductKeyProvider(office_key=None), clipboard, office_launcher).execute()
 
     assert result.success is False
     assert "제품키가 설정되어 있지 않습니다" in result.message
     assert clipboard.texts == []
-    assert launcher.launches == []
+    assert office_launcher.calls == 0
+
+
+def test_windows_office_launcher_prefers_program_files_root_office16(monkeypatch, tmp_path) -> None:
+    program_files = tmp_path / "ProgramFiles"
+    program_files_x86 = tmp_path / "ProgramFilesX86"
+    excel = program_files / "Microsoft Office" / "root" / "Office16" / "EXCEL.EXE"
+    x86_excel = program_files_x86 / "Microsoft Office" / "root" / "Office16" / "EXCEL.EXE"
+    excel.parent.mkdir(parents=True)
+    x86_excel.parent.mkdir(parents=True)
+    excel.write_text("", encoding="utf-8")
+    x86_excel.write_text("", encoding="utf-8")
+    process_launcher = FakeProcessLauncher()
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.setenv("ProgramFiles(x86)", str(program_files_x86))
+
+    launcher = WindowsOfficeLauncher(FakeRegistry(), process_launcher)
+
+    assert launcher.find_excel_executable() == excel
+    assert launcher.launch_excel() == str(excel)
+    assert process_launcher.launches == [(excel, ())]
+
+
+def test_windows_office_launcher_uses_x86_fallback(monkeypatch, tmp_path) -> None:
+    program_files = tmp_path / "ProgramFiles"
+    program_files_x86 = tmp_path / "ProgramFilesX86"
+    excel = program_files_x86 / "Microsoft Office" / "root" / "Office16" / "EXCEL.EXE"
+    excel.parent.mkdir(parents=True)
+    excel.write_text("", encoding="utf-8")
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.setenv("ProgramFiles(x86)", str(program_files_x86))
+
+    launcher = WindowsOfficeLauncher(FakeRegistry(), FakeProcessLauncher())
+
+    assert launcher.find_excel_executable() == excel
+
+
+def test_windows_office_launcher_uses_app_paths_registry(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "missing-program-files"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "missing-program-files-x86"))
+    excel = tmp_path / "Office" / "EXCEL.EXE"
+    excel.parent.mkdir(parents=True)
+    excel.write_text("", encoding="utf-8")
+    registry = FakeRegistry(
+        {
+            (
+                "HKEY_LOCAL_MACHINE",
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\excel.exe",
+                "",
+            ): str(excel)
+        }
+    )
+    process_launcher = FakeProcessLauncher()
+
+    result = WindowsOfficeLauncher(registry, process_launcher).launch_excel()
+
+    assert result == str(excel)
+    assert process_launcher.launches == [(excel, ())]
+
+
+def test_windows_office_launcher_falls_back_to_excel_command(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "missing-program-files"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "missing-program-files-x86"))
+    process_launcher = FakeProcessLauncher()
+
+    result = WindowsOfficeLauncher(FakeRegistry(), process_launcher).launch_excel()
+
+    assert result == "excel.exe"
+    assert process_launcher.launches == [(Path("excel.exe"), ())]
 
 
 def test_null_product_key_provider_returns_no_keys() -> None:

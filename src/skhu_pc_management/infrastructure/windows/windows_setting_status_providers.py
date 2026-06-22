@@ -15,6 +15,7 @@ from skhu_pc_management.ports.resource_resolver import ResourceResolver
 
 
 _BUILT_IN_LOCAL_ACCOUNT_NAMES = {"Guest", "DefaultAccount", "WDAGUtilityAccount"}
+CHROME_TASKBAR_SHORTCUT_NAME = "Google Chrome.lnk"
 
 
 @dataclass(frozen=True)
@@ -83,23 +84,27 @@ class EdgeShortcutStatusProvider:
 @dataclass(frozen=True)
 class TaskbarLayoutStatusProvider:
     resource_resolver: ResourceResolver
+    command_runner: CommandRunner | None = None
 
     def check(self, setting_id: str) -> SettingStatus:
         label = "작업표시줄 아이콘 설정"
         try:
             source_dir = self.resource_resolver.resolve("TaskBar")
-            source_names = _shortcut_names(source_dir)
+            source_names = _expected_taskbar_shortcut_names(source_dir)
             target_dir = _taskbar_target_dir()
-            target_names = _shortcut_names(target_dir) if target_dir.exists() else set()
+            target_names = _target_taskbar_shortcut_names(target_dir) if target_dir.exists() else set()
+            issues = _target_taskbar_shortcut_issues(source_names, target_dir, self.command_runner)
         except Exception as exc:
             return _unknown(setting_id, label, f"작업표시줄 리소스 상태를 확인할 수 없습니다: {exc}")
 
         missing = sorted(source_names - target_names)
         extra = sorted(target_names - source_names)
-        configured = not missing and not extra and bool(source_names)
+        configured = not missing and not extra and not issues and bool(source_names)
+        issue_detail = f", 문제={issues or '없음'}"
         detail = (
             f"소스={sorted(source_names)}, 대상={sorted(target_names)}, "
-            f"누락={missing or '없음'}, 추가={extra or '없음'}; 실제 pin 상태는 Windows Shell 정책에 따라 다를 수 있습니다."
+            f"누락={missing or '없음'}, 추가={extra or '없음'}{issue_detail}; "
+            "실제 pin 상태는 Windows Shell 정책에 따라 다를 수 있습니다."
         )
         return SettingStatus(
             setting_id=setting_id,
@@ -215,12 +220,84 @@ def _shortcut_names(directory: Path) -> set[str]:
     return {_normalize_taskbar_shortcut_name(path) for path in directory.glob("*.lnk")}
 
 
+def _expected_taskbar_shortcut_names(directory: Path) -> set[str]:
+    return _shortcut_names(directory)
+
+
+def _target_taskbar_shortcut_names(directory: Path) -> set[str]:
+    return _shortcut_names(directory)
+
+
 def _normalize_taskbar_shortcut_name(path: Path | str) -> str:
     name = Path(path).name
-    stem = Path(name).stem.lower().replace(" ", "")
-    if stem in {"chrome", "googlechrome"}:
-        return "Chrome.lnk"
+    if _is_chrome_shortcut_name(name):
+        return CHROME_TASKBAR_SHORTCUT_NAME
     return name
+
+
+def _target_taskbar_shortcut_issues(
+    expected_names: set[str],
+    target_dir: Path,
+    command_runner: CommandRunner | None,
+) -> list[str]:
+    if not target_dir.exists() or not target_dir.is_dir():
+        return []
+
+    issues: list[str] = []
+    chrome_shortcuts = [path for path in target_dir.glob("*.lnk") if _is_chrome_shortcut_name(path.name)]
+    legacy_chrome_names = [path.name for path in chrome_shortcuts if path.name != CHROME_TASKBAR_SHORTCUT_NAME]
+    if legacy_chrome_names:
+        issues.append(f"잘못된 Chrome 바로가기 이름: {', '.join(sorted(legacy_chrome_names))}")
+
+    if CHROME_TASKBAR_SHORTCUT_NAME not in expected_names:
+        return issues
+
+    chrome_shortcut = target_dir / CHROME_TASKBAR_SHORTCUT_NAME
+    if not chrome_shortcut.exists():
+        return issues
+    if command_runner is None:
+        return issues
+
+    try:
+        target = _read_shortcut_target(command_runner, chrome_shortcut)
+    except Exception:
+        issues.append("Google Chrome.lnk 대상 확인 필요")
+        return issues
+
+    if not target or not Path(target).is_file():
+        issues.append(f"Google Chrome.lnk 대상 없음: {target or '없음'}")
+    return issues
+
+
+def _is_chrome_shortcut_name(name: str) -> bool:
+    stem = Path(name).stem.lower().replace(" ", "")
+    return stem in {"chrome", "googlechrome"}
+
+
+def _read_shortcut_target(command_runner: CommandRunner, shortcut_path: Path) -> str | None:
+    import base64
+
+    script = f"""
+$Shell = New-Object -ComObject WScript.Shell
+$Shortcut = $Shell.CreateShortcut({_ps_single_quoted(str(shortcut_path))})
+$Shortcut.TargetPath
+""".strip()
+    output = command_runner.run(
+        (
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            base64.b64encode(script.encode("utf-16le")).decode("ascii"),
+        )
+    )
+    target = output.strip()
+    return target or None
+
+
+def _ps_single_quoted(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _taskbar_target_dir() -> Path:
