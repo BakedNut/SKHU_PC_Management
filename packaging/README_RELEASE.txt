@@ -8,10 +8,11 @@ SKHU PC Management 배포 안내
 
 필수 포함 항목:
 - _internal/
-- resources/
+- _internal/resources/ 또는 resources/
 - resources/images/skhu_logo.ico
 - resources/TaskBar.reg
-- resources/TaskBar/*.lnk (작업표시줄 리소스를 배포하는 경우)
+- resources/TaskBar/Google Chrome.lnk
+- resources/23시 자동종료 취소.lnk
 
 제품키 파일:
 - 실제 제품키는 Git에 포함하지 않습니다.
@@ -22,5 +23,7 @@ SKHU PC Management 배포 안내
 
 주의:
 - 앱은 관리자 권한 실행이 필요할 수 있습니다.
-- 기본 설정 적용, 네트워크 변경, 인증 준비, 작업표시줄 관련 기능은 실제 Windows 테스트 PC에서만 검증합니다.
-- 작업표시줄 기능은 현재 리소스 검증과 dry-run 계획 확인이 기본입니다.
+- 기본 설정 적용, 네트워크 변경, 인증 준비, 작업표시줄 적용, 자동종료 등록은 실제 Windows 테스트 PC에서만 검증합니다.
+- 작업표시줄 Chrome 바로가기는 Google Chrome.lnk 이름과 실제 chrome.exe 대상 경로 기준으로 검증합니다.
+- Chrome/Edge 사용자 데이터 초기화는 User Data 폴더 전체 삭제입니다.
+- UI 자동화 테스트는 SKHU_PC_MANAGEMENT_TEST_MODE=1 상태에서 실행하세요.

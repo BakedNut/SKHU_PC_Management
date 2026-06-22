@@ -1,7 +1,7 @@
 [project]
 name = "skhu-pc-management"
 version = "0.1.0"
-description = "Python PySide6 rewrite scaffold for SKHU PC Management"
+description = "PySide6 Windows desktop tool for SKHU classroom PC management"
 requires-python = ">=3.12"
 dependencies = [
     "PySide6",
