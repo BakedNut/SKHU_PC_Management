@@ -183,6 +183,20 @@ def test_app_qss_contains_pc_action_primary_button_styles() -> None:
     assert "min-height: 54px;" in APP_QSS
 
 
+def test_app_qss_forces_message_box_light_theme() -> None:
+    assert "QMessageBox {" in APP_QSS
+    assert "QMessageBox QLabel" in APP_QSS
+    assert "QMessageBox QTextEdit" in APP_QSS
+    assert "QMessageBox QPushButton" in APP_QSS
+    assert "QMessageBox QPushButton:hover" in APP_QSS
+    assert "QMessageBox QPushButton:pressed" in APP_QSS
+    assert "QMessageBox QPushButton:disabled" in APP_QSS
+    assert "background-color: #FFFFFF;" in APP_QSS
+    assert "color: #111827;" in APP_QSS
+    assert "background-color: #2563EB;" in APP_QSS
+    assert "color: #FFFFFF;" in APP_QSS
+
+
 def test_combo_with_arrow_wraps_combobox_with_visible_indicator(qt_app: QApplication) -> None:
     combo = QComboBox()
 
