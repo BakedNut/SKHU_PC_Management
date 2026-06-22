@@ -57,6 +57,7 @@ python -m skhu_pc_management.main
 
 - `새로고침`은 PC 정보를 다시 조회합니다.
 - `PC 이름 변경`은 Windows 설정의 시스템 정보 화면을 엽니다. 실제 이름 변경과 재부팅 안내는 Windows 설정 UI에서 처리합니다.
+- 성공 시 별도 완료 팝업은 띄우지 않고 Windows 설정 화면이 열리는 것으로 결과를 확인합니다.
 - 앱은 더 이상 `QInputDialog`로 새 PC 이름을 입력받거나 `Rename-Computer`를 UI에서 직접 실행하지 않습니다.
 
 ### 작업 센터
@@ -69,6 +70,7 @@ python -m skhu_pc_management.main
 - Windows 10 선택 상태에서는 Windows 11 전용 시작 메뉴 항목이 선택/표시 대상에서 제외됩니다.
 - Explorer 재시작은 변경 사항 반영을 위한 best-effort 후처리입니다. Explorer 실행 결과는 설정 상태 판정 기준이 아닙니다.
 - `PC 점검 결과` 표에서는 Office 설치 확인 행을 표시하지 않습니다. Office 감지 결과는 인증 카드의 Office row에만 표시됩니다.
+- Chrome/Edge/PotPlayer/Bandizip 실행은 성공 시 완료 팝업을 띄우지 않고, 실패 시에만 경고 팝업을 표시합니다.
 
 ### 네트워크
 
@@ -208,6 +210,7 @@ dist\SKHU_PC_Management\
 - PC 정보 자동 로드 확인.
 - 설정 상태 확인과 `설정 항목 | 현재 상태 | 상세` 표 확인.
 - Windows 10 선택 시 Win11 전용 시작 메뉴 항목 미표시 확인.
+- Windows 다크 테마에서 앱 팝업의 본문과 버튼 텍스트가 읽히는지 확인.
 - 제품키가 화면에 표시되지 않는지 확인.
 - Windows 인증 창과 Excel 실행 확인.
 - 네트워크 어댑터 조회 확인.
