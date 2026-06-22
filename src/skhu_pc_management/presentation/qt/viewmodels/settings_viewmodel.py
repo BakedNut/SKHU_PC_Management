@@ -56,7 +56,7 @@ class SettingsViewModel:
         finally:
             self.is_busy = False
 
-    def apply_selected(self, setting_ids: list[str]) -> None:
+    def apply_selected(self, setting_ids: list[str], display_setting_ids: list[str] | None = None) -> None:
         if self.is_busy:
             self.status_message = "다른 작업이 진행 중입니다."
             return
@@ -68,26 +68,43 @@ class SettingsViewModel:
         self.is_busy = True
         self.status_message = "선택한 설정을 적용하는 중입니다..."
         try:
-            result = self.apply_settings_use_case.execute(setting_ids)
+            selected_ids = list(setting_ids)
+            display_ids = list(display_setting_ids) if display_setting_ids is not None else self.all_setting_ids()
+            result = self.apply_settings_use_case.execute(selected_ids)
             statuses_by_id = {}
             try:
-                statuses = self.check_settings_status_use_case.execute(setting_ids)
+                statuses = self.check_settings_status_use_case.execute(display_ids)
                 statuses_by_id = {status.setting_id: status for status in statuses}
             except Exception as exc:
                 self.status_message = f"설정 적용 후 상태 재확인 실패: {exc}"
 
             self.result_rows = []
-            for item in result.results:
-                current_status = statuses_by_id.get(item.setting_id)
-                detail_parts = [_display_message(item.message)]
+            apply_results_by_id = {item.setting_id: item for item in result.results}
+            definitions_by_id = {definition.setting_id: definition for definition in self.definitions}
+            for setting_id in display_ids:
+                item = apply_results_by_id.get(setting_id)
+                current_status = statuses_by_id.get(setting_id)
+                definition = definitions_by_id.get(setting_id)
+                name = (
+                    (current_status.label or current_status.name)
+                    if current_status is not None
+                    else item.name
+                    if item is not None
+                    else definition.name
+                    if definition is not None
+                    else setting_id
+                )
+                detail_parts = []
+                if item is not None:
+                    detail_parts.append(_display_message(item.message))
                 if current_status is not None:
                     status_detail = _status_detail(current_status)
                     if status_detail:
                         detail_parts.append(status_detail)
                 self.result_rows.append(
                     (
-                        item.name,
-                        _display_status(item.status),
+                        name,
+                        _display_status(item.status) if item is not None else "-",
                         _display_status(current_status.status_text) if current_status else "확인 불가",
                         " / ".join(part for part in detail_parts if part),
                     )

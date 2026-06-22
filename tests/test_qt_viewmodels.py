@@ -56,12 +56,13 @@ class FakeCheckSettingsStatus:
         self.requests.append(setting_ids)
         return [
             SettingStatus(
-                setting_id=setting_ids[0],
-                label="설정",
+                setting_id=setting_id,
+                label=f"설정 {setting_id}",
                 status_text="configured",
                 actual_value=0,
                 is_configured=True,
             )
+            for setting_id in setting_ids
         ]
 
 
@@ -72,7 +73,10 @@ class FakeApplySettings:
     def execute(self, setting_ids: list[str]) -> ApplySettingsResult:
         self.requests.append(setting_ids)
         return ApplySettingsResult(
-            [ApplyResult(setting_id=setting_ids[0], name="설정", success=True, status="applied", message="ok")]
+            [
+                ApplyResult(setting_id=setting_id, name=f"설정 {setting_id}", success=True, status="applied", message="ok")
+                for setting_id in setting_ids
+            ]
         )
 
 
@@ -132,14 +136,32 @@ def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
     assert view_model.summary_text == "상태 확인 필요"
 
     view_model.check_status(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "-", "설정됨", "0")]
+    assert view_model.result_rows == [("설정 hide_frequent_folders", "-", "설정됨", "0")]
     assert view_model.summary_text == "모든 항목 정상"
     assert check_status.requests == [["hide_frequent_folders"]]
 
-    view_model.apply_selected(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "적용됨", "설정됨", "ok / 0")]
+    view_model.apply_selected(["hide_frequent_folders"], display_setting_ids=["hide_frequent_folders"])
+    assert view_model.result_rows == [("설정 hide_frequent_folders", "적용됨", "설정됨", "ok / 0")]
     assert apply_settings.requests == [["hide_frequent_folders"]]
     assert check_status.requests == [["hide_frequent_folders"], ["hide_frequent_folders"]]
+
+
+def test_settings_viewmodel_apply_selected_rechecks_display_setting_ids() -> None:
+    check_status = FakeCheckSettingsStatus()
+    apply_settings = FakeApplySettings()
+    view_model = SettingsViewModel(check_status, apply_settings)
+
+    view_model.apply_selected(
+        ["show_file_extensions"],
+        display_setting_ids=["show_file_extensions", "hide_task_view_button"],
+    )
+
+    assert apply_settings.requests == [["show_file_extensions"]]
+    assert check_status.requests == [["show_file_extensions", "hide_task_view_button"]]
+    assert view_model.result_rows == [
+        ("설정 show_file_extensions", "적용됨", "설정됨", "ok / 0"),
+        ("설정 hide_task_view_button", "-", "설정됨", "0"),
+    ]
 
 
 def test_settings_viewmodel_summary_counts_attention_rows() -> None:

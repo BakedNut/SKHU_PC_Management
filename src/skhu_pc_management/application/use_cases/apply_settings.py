@@ -168,15 +168,15 @@ class ApplySettings:
         if not post_command_failures:
             return
 
-        message = "Post command failed: " + "; ".join(post_command_failures)
+        message = "후처리 경고: Explorer 재시작 확인 필요 (" + "; ".join(post_command_failures) + ")"
         for index, result in enumerate(results):
             if result.success:
                 results[index] = ApplyResult(
                     setting_id=result.setting_id,
                     name=result.name,
-                    success=False,
-                    status="failed",
-                    message=message,
+                    success=True,
+                    status=result.status,
+                    message=f"{result.message} / {message}",
                 )
 
     def _run_post_command(self, command: tuple[str, ...], failures: list[str]) -> None:

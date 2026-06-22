@@ -35,6 +35,14 @@ class FakeCommandRunner:
         return ""
 
 
+class FailingExplorerCommandRunner(FakeCommandRunner):
+    def run(self, command: Sequence[str]) -> str:
+        self.commands.append(tuple(command))
+        if tuple(command) == START_EXPLORER_COMMAND:
+            raise RuntimeError("Command failed with exit code 2")
+        return ""
+
+
 class FakeTaskbarLayoutUseCase:
     def __init__(self) -> None:
         self.dry_run_requests: list[bool] = []
@@ -133,6 +141,20 @@ def test_explorer_restart_runs_through_command_runner_when_required() -> None:
 
     use_case.execute(["hide_task_view_button"])
 
+    assert STOP_EXPLORER_COMMAND in command_runner.commands
+    assert START_EXPLORER_COMMAND in command_runner.commands
+
+
+def test_post_command_failure_is_reported_as_warning_without_flipping_apply_result() -> None:
+    command_runner = FailingExplorerCommandRunner()
+    use_case = ApplySettings(FakeRegistry(), command_runner)
+
+    result = use_case.execute(["hide_task_view_button"])
+
+    assert result.results[0].success is True
+    assert result.results[0].status == "applied"
+    assert "후처리 경고" in result.results[0].message
+    assert "Post command failed" not in result.results[0].message
     assert STOP_EXPLORER_COMMAND in command_runner.commands
     assert START_EXPLORER_COMMAND in command_runner.commands
 

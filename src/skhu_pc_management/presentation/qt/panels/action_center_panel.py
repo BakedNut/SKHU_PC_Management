@@ -336,10 +336,10 @@ class ActionCenterPanel(QWidget):
 
     def _settings_status_card(self) -> QWidget:
         card = Card("시스템 설정 적용 상태")
-        self.settings_table = QTableWidget(0, 3)
-        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "현재 상태", "상세"])
+        self.settings_table = QTableWidget(0, 4)
+        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "적용 결과", "현재 상태", "상세"])
         configure_table(self.settings_table, compact=True)
-        set_column_widths(self.settings_table, (220, 110))
+        set_column_widths(self.settings_table, (220, 86, 110))
         self.settings_table.setMinimumHeight(260)
         card.body_layout.addWidget(self.settings_table)
         return card
@@ -484,10 +484,11 @@ class ActionCenterPanel(QWidget):
             current_status = row[2] if len(row) > 2 else ""
             detail = row[3] if len(row) > 3 else ""
             self.settings_table.setItem(row_index, 0, table_item(name))
-            self.settings_table.setItem(row_index, 1, status_item(current_status))
+            self.settings_table.setItem(row_index, 1, status_item(apply_status))
+            self.settings_table.setItem(row_index, 2, status_item(current_status))
             detail_item = table_item(detail)
             detail_item.setToolTip(detail)
-            self.settings_table.setItem(row_index, 2, detail_item)
+            self.settings_table.setItem(row_index, 3, detail_item)
 
     def _render_pc_check_rows(self) -> None:
         rows = self._pc_check.result_rows
@@ -504,6 +505,18 @@ class ActionCenterPanel(QWidget):
 
     def _selected_setting_ids(self) -> list[str]:
         return [setting_id for setting_id, checkbox in self._checkboxes.items() if checkbox.isChecked()]
+
+    def _visible_setting_ids(self) -> list[str]:
+        is_win11 = self.win11_radio.isChecked()
+        setting_ids: list[str] = []
+        for _, options in SETTING_SECTIONS:
+            for option in options:
+                if option.setting_id is None:
+                    continue
+                if option.win11_only and not is_win11:
+                    continue
+                setting_ids.append(option.setting_id)
+        return setting_ids
 
     def _select_all(self) -> None:
         for checkbox in self._checkboxes.values():
@@ -528,7 +541,7 @@ class ActionCenterPanel(QWidget):
         if self._busy_coordinator and not self._busy_coordinator.try_begin("선택한 기본 설정을 적용하는 중..."):
             return
         try:
-            self._settings.apply_selected(self._selected_setting_ids())
+            self._settings.apply_selected(self._selected_setting_ids(), display_setting_ids=self._visible_setting_ids())
             self.render()
         finally:
             if self._busy_coordinator:
@@ -538,7 +551,7 @@ class ActionCenterPanel(QWidget):
         if self._busy_coordinator and not self._busy_coordinator.try_begin("상태를 새로고침하는 중..."):
             return
         try:
-            self._settings.check_status(self._settings.all_setting_ids())
+            self._settings.check_status(self._visible_setting_ids())
             self._pc_check.run_checks()
             self.render()
         finally:
@@ -693,7 +706,7 @@ class ActionCenterPanel(QWidget):
         return QMessageBox.question(self, confirmation.title, confirmation.message) == QMessageBox.Yes
 
     def _refresh_after_action(self) -> None:
-        self._settings.check_status(self._settings.all_setting_ids())
+        self._settings.check_status(self._visible_setting_ids())
         self._pc_check.run_checks()
         self.render()
 
