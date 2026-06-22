@@ -112,7 +112,7 @@ class ApplySettings:
                     status="failed",
                     message="작업표시줄 설정 적용 기능이 구성되지 않았습니다.",
                 )
-            result = self.apply_taskbar_layout_use_case.execute(dry_run=True)
+            result = self.apply_taskbar_layout_use_case.execute(dry_run=False)
             return ApplyResult(
                 setting_id=definition.setting_id,
                 name=definition.name,

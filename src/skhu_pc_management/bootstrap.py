@@ -120,7 +120,11 @@ def is_test_mode_enabled() -> bool:
 
 
 def create_safety_guard(test_mode: bool | None = None) -> SafetyGuard:
-    return SafetyGuard(test_mode=is_test_mode_enabled() if test_mode is None else test_mode)
+    enabled_test_mode = is_test_mode_enabled() if test_mode is None else test_mode
+    return SafetyGuard(
+        test_mode=enabled_test_mode,
+        allow_real_taskbar_apply=not enabled_test_mode,
+    )
 
 
 def create_infrastructure() -> InfrastructureContainer:
