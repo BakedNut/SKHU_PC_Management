@@ -17,6 +17,22 @@ class HttpAgentReportClient(AgentReportClient):
     def send_report(self, report: AgentReport) -> AgentReportResult:
         url = f"{self._config.api_base_url}/api/agent/pc-reports"
 
+        payload = _to_payload(report)
+
+        self._logger.info("Agent report payload: %s", payload)
+
+        response = requests.post(
+            url,
+            json=payload,
+            headers=self._build_headers(),
+            timeout=self._config.timeout_seconds,
+        )
+
+        if not response.ok:
+            raise RuntimeError(
+                f"{response.status_code} Error: {response.text}"
+            )
+
         response = requests.post(
             url,
             json=_to_payload(report),
