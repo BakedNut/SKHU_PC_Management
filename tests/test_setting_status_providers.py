@@ -101,6 +101,42 @@ def test_taskbar_layout_status_provider_compares_source_and_target(monkeypatch, 
     assert "실제 pin 상태" in status.detail
 
 
+def test_taskbar_layout_status_provider_normalizes_chrome_shortcut_names(monkeypatch, tmp_path) -> None:
+    resources = tmp_path / "resources"
+    source = resources / "TaskBar"
+    source.mkdir(parents=True)
+    (source / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData"
+    target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target.mkdir(parents=True)
+    (target / "Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources)).check("set_taskbar_icons")
+
+    assert status.is_configured is True
+    assert "누락=없음" in status.detail
+    assert "추가=없음" in status.detail
+
+
+def test_taskbar_layout_status_provider_keeps_non_chrome_shortcut_names_exact(monkeypatch, tmp_path) -> None:
+    resources = tmp_path / "resources"
+    source = resources / "TaskBar"
+    source.mkdir(parents=True)
+    (source / "Explorer.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData"
+    target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target.mkdir(parents=True)
+    (target / "Explorer Copy.lnk").write_text("shortcut", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources)).check("set_taskbar_icons")
+
+    assert status.is_configured is False
+    assert "Explorer.lnk" in status.detail
+    assert "Explorer Copy.lnk" in status.detail
+
+
 def test_password_expiration_status_provider_reports_general_remaining_user_as_detail_only() -> None:
     user_output = """
 [

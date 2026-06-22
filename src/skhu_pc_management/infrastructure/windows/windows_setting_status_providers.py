@@ -212,7 +212,15 @@ def _same_path(left: object, right: str) -> bool:
 def _shortcut_names(directory: Path) -> set[str]:
     if not directory.exists() or not directory.is_dir():
         return set()
-    return {path.name for path in directory.glob("*.lnk")}
+    return {_normalize_taskbar_shortcut_name(path) for path in directory.glob("*.lnk")}
+
+
+def _normalize_taskbar_shortcut_name(path: Path | str) -> str:
+    name = Path(path).name
+    stem = Path(name).stem.lower().replace(" ", "")
+    if stem in {"chrome", "googlechrome"}:
+        return "Chrome.lnk"
+    return name
 
 
 def _taskbar_target_dir() -> Path:
