@@ -217,9 +217,7 @@ class PcInfoPanel(QWidget):
     def _show_pc_name_settings_result(self, result: object | None) -> None:
         self._render()
         message = getattr(result, "message", self._view_model.status_message)
-        if getattr(result, "success", False):
-            QMessageBox.information(self, "PC 이름 변경", message)
-        else:
+        if not getattr(result, "success", False):
             QMessageBox.warning(self, "PC 이름 변경 실패", message)
 
     def render(self) -> None:

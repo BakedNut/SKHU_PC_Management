@@ -664,13 +664,14 @@ class ActionCenterPanel(QWidget):
             return
         if self._busy_coordinator and not self._busy_coordinator.try_begin("프로그램을 실행하는 중..."):
             return
+        result = None
         try:
             result = self._launch_program_use_case.execute(program_id)
-            self._show_result(result)
+            self._show_failure_result(result, "실행 실패")
             self._refresh_after_action()
         finally:
             if self._busy_coordinator:
-                self._busy_coordinator.end("작업이 완료되었습니다.")
+                self._busy_coordinator.end(getattr(result, "message", "작업이 완료되었습니다."))
 
     def _run_maintenance(self, action: str) -> None:
         if self._maintenance_use_case is None:
@@ -715,6 +716,11 @@ class ActionCenterPanel(QWidget):
             QMessageBox.information(self, "완료", message)
         else:
             QMessageBox.warning(self, "실패", message)
+
+    def _show_failure_result(self, result: object, title: str) -> None:
+        if bool(getattr(result, "success", False)):
+            return
+        QMessageBox.warning(self, title, getattr(result, "message", ""))
 
     def _apply_test_mode(self) -> None:
         if not self._test_mode:
