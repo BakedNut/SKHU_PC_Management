@@ -15,6 +15,7 @@ from skhu_pc_management.application.use_cases.launch_program import LaunchProgra
 from skhu_pc_management.application.use_cases.list_installed_programs import ListInstalledPrograms
 from skhu_pc_management.application.use_cases.list_network_adapters import ListNetworkAdapters
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo
+from skhu_pc_management.application.use_cases.open_pc_name_settings import OpenPcNameSettings
 from skhu_pc_management.application.use_cases.rename_pc import RenamePc
 from skhu_pc_management.application.use_cases.run_pc_checks import (
     AutoShutdownScheduleCheck,
@@ -49,6 +50,7 @@ from skhu_pc_management.infrastructure.windows.windows_office_launcher import Wi
 from skhu_pc_management.infrastructure.windows.windows_process_launcher import WindowsProcessLauncher
 from skhu_pc_management.infrastructure.windows.windows_program_launcher import WindowsProgramLauncher
 from skhu_pc_management.infrastructure.windows.windows_scheduled_task_reader import WindowsScheduledTaskReader
+from skhu_pc_management.infrastructure.windows.windows_settings_launcher import WindowsSettingsAppLauncher
 from skhu_pc_management.infrastructure.windows.windows_setting_status_providers import (
     DefaultWallpaperStatusProvider,
     EdgeShortcutStatusProvider,
@@ -79,6 +81,7 @@ class InfrastructureContainer:
     registry: WinregRegistry
     command_runner: SubprocessCommandRunner
     process_launcher: WindowsProcessLauncher
+    windows_settings_launcher: WindowsSettingsAppLauncher
     clipboard: WindowsClipboard
     product_key_provider: EmbeddedProductKeyProvider
     resource_resolver: PyInstallerResourceResolver
@@ -114,6 +117,7 @@ class UseCaseContainer:
     apply_static_ip: ApplyStaticIp
     set_dhcp: SetDhcp
     rename_pc: RenamePc
+    open_pc_name_settings: OpenPcNameSettings
     launch_program: LaunchProgram
     run_pc_maintenance: RunPcMaintenance
     run_pc_checks: RunPcChecks
@@ -149,6 +153,7 @@ def create_infrastructure() -> InfrastructureContainer:
     registry = WinregRegistry()
     command_runner = SubprocessCommandRunner()
     process_launcher = WindowsProcessLauncher()
+    windows_settings_launcher = WindowsSettingsAppLauncher(process_launcher)
     clipboard = WindowsClipboard()
     product_key_provider = EmbeddedProductKeyProvider()
     resource_resolver = PyInstallerResourceResolver()
@@ -168,6 +173,7 @@ def create_infrastructure() -> InfrastructureContainer:
         registry=registry,
         command_runner=command_runner,
         process_launcher=process_launcher,
+        windows_settings_launcher=windows_settings_launcher,
         clipboard=clipboard,
         product_key_provider=product_key_provider,
         resource_resolver=resource_resolver,
@@ -242,6 +248,7 @@ def create_use_cases(infra: InfrastructureContainer, safety_guard: SafetyGuard) 
         apply_static_ip=ApplyStaticIp(infra.network_configurator, safety_guard=safety_guard),
         set_dhcp=SetDhcp(infra.network_configurator, safety_guard=safety_guard),
         rename_pc=RenamePc(infra.pc_renamer, safety_guard=safety_guard),
+        open_pc_name_settings=OpenPcNameSettings(infra.windows_settings_launcher, safety_guard=safety_guard),
         launch_program=LaunchProgram(infra.program_launcher, safety_guard=safety_guard),
         run_pc_maintenance=RunPcMaintenance(
             infra.system_maintenance,
@@ -270,7 +277,7 @@ def create_view_models(
     infra: InfrastructureContainer,
 ) -> ViewModelContainer:
     return ViewModelContainer(
-        pc_info=PcInfoViewModel(use_cases.load_pc_info, use_cases.rename_pc),
+        pc_info=PcInfoViewModel(use_cases.load_pc_info, use_cases.open_pc_name_settings),
         settings=SettingsViewModel(
             use_cases.check_settings_status,
             use_cases.apply_settings,

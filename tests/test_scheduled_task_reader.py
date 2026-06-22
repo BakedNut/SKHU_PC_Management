@@ -83,6 +83,13 @@ def test_parse_scheduled_task_json_treats_empty_output_as_missing() -> None:
     assert task.error is None
 
 
+def test_parse_scheduled_task_json_handles_exists_false_object() -> None:
+    task = parse_scheduled_task_json("23시 자동 종료", '{"Exists": false, "TaskName": "23시 자동 종료"}')
+
+    assert task.exists is False
+    assert task.error is None
+
+
 def test_windows_scheduled_task_reader_uses_command_runner_only() -> None:
     runner = FakeCommandRunner(
         """
@@ -100,7 +107,9 @@ def test_windows_scheduled_task_reader_uses_command_runner_only() -> None:
     assert runner.commands[0][:4] == ("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass")
     assert runner.commands[0][4] == "-EncodedCommand"
     script = _decode_encoded_powershell(runner.commands[0])
-    assert "$task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop" in script
+    assert "$task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue" in script
+    assert "Exists = $false" in script
+    assert "Exists = $true" in script
     assert "Execute = [string]$action.Execute" in script
     assert "Arguments = [string]$action.Arguments" in script
     assert "StartBoundary = [string]$trigger.StartBoundary" in script
