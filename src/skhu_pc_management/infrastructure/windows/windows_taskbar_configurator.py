@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -100,8 +101,16 @@ class WindowsTaskbarConfigurator:
             target_dir.mkdir(parents=True, exist_ok=True)
             for shortcut in target_dir.glob("*.lnk"):
                 shortcut.unlink()
+            warnings: list[str] = []
+            chrome_requested = any(_is_chrome_shortcut(shortcut) for shortcut in validation.shortcut_files)
             for shortcut in validation.shortcut_files:
+                if _is_chrome_shortcut(shortcut):
+                    continue
                 shutil.copy2(shortcut, target_dir / shortcut.name)
+            if chrome_requested:
+                warning = _apply_chrome_shortcut(self.command_runner, target_dir)
+                if warning:
+                    warnings.append(warning)
             if validation.reg_file is not None:
                 self.command_runner.run(("reg", "import", str(validation.reg_file)))
         except Exception as exc:
@@ -122,7 +131,7 @@ class WindowsTaskbarConfigurator:
 
         return TaskbarApplyResult(
             success=True,
-            message="작업표시줄 설정을 적용했습니다.",
+            message=_taskbar_apply_success_message(warnings),
             dry_run=False,
             reg_file=validation.reg_file,
             shortcut_files=validation.shortcut_files,
@@ -135,6 +144,9 @@ def _planned_actions(validation: ResourceValidationResult) -> tuple[str, ...]:
     if validation.taskbar_dir is not None:
         actions.append(f"TaskBar 바로가기 원본 확인: {validation.taskbar_dir}")
     for shortcut in validation.shortcut_files:
+        if _is_chrome_shortcut(shortcut):
+            actions.append("Chrome 바로가기 동적 resolve 예정: 시작 메뉴 또는 chrome.exe")
+            continue
         actions.append(f"복사 예정: {shortcut.name}")
     if validation.reg_file is not None:
         actions.append(f"레지스트리 적용 예정: {validation.reg_file}")
@@ -147,3 +159,93 @@ def _taskbar_target_dir() -> Path:
     if not appdata:
         raise RuntimeError("APPDATA 환경변수를 찾을 수 없습니다.")
     return Path(appdata) / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+
+
+def _apply_chrome_shortcut(command_runner: CommandRunner, target_dir: Path) -> str | None:
+    target_shortcut = target_dir / "Chrome.lnk"
+    existing_shortcut = _find_existing_chrome_shortcut()
+    if existing_shortcut is not None:
+        shutil.copy2(existing_shortcut, target_shortcut)
+        return None
+
+    chrome_exe = _find_chrome_exe()
+    if chrome_exe is None:
+        return "Chrome 설치 또는 바로가기를 찾을 수 없어 Chrome 고정을 건너뜀"
+
+    try:
+        _create_chrome_shortcut(command_runner, chrome_exe, target_shortcut)
+    except Exception:
+        return "Chrome 바로가기 생성 실패로 Chrome 고정을 건너뜀"
+    return None
+
+
+def _is_chrome_shortcut(path: Path) -> bool:
+    name = path.stem.lower().replace(" ", "")
+    return name in {"chrome", "googlechrome"}
+
+
+def _find_existing_chrome_shortcut() -> Path | None:
+    roots: list[Path] = []
+    program_data = os.environ.get("ProgramData")
+    appdata = os.environ.get("APPDATA")
+    if program_data:
+        roots.append(Path(program_data) / "Microsoft" / "Windows" / "Start Menu" / "Programs")
+    if appdata:
+        roots.append(Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs")
+
+    preferred_names = {"google chrome.lnk", "chrome.lnk"}
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for shortcut in root.rglob("*.lnk"):
+            if shortcut.name.lower() in preferred_names:
+                return shortcut
+    return None
+
+
+def _find_chrome_exe() -> Path | None:
+    candidates: list[Path] = []
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        base = os.environ.get(env_name)
+        if base:
+            candidates.append(Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _create_chrome_shortcut(command_runner: CommandRunner, chrome_exe: Path, shortcut_path: Path) -> None:
+    script = f"""
+$Shell = New-Object -ComObject WScript.Shell
+$Shortcut = $Shell.CreateShortcut({_ps_single_quoted(str(shortcut_path))})
+$Shortcut.TargetPath = {_ps_single_quoted(str(chrome_exe))}
+$Shortcut.WorkingDirectory = {_ps_single_quoted(str(chrome_exe.parent))}
+$Shortcut.IconLocation = {_ps_single_quoted(str(chrome_exe) + ",0")}
+$Shortcut.Save()
+""".strip()
+    command_runner.run(
+        (
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            _powershell_encoded_command(script),
+        )
+    )
+
+
+def _powershell_encoded_command(script: str) -> str:
+    return base64.b64encode(script.encode("utf-16le")).decode("ascii")
+
+
+def _ps_single_quoted(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _taskbar_apply_success_message(warnings: list[str]) -> str:
+    message = "작업표시줄 설정을 적용했습니다."
+    if warnings:
+        message += " " + " ".join(f"{warning}." for warning in warnings)
+    return message

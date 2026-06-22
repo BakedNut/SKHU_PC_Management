@@ -128,7 +128,7 @@ def test_taskbar_dry_run_does_not_modify_files_or_run_system_commands(tmp_path: 
     taskbar_dir = resources / "TaskBar"
     taskbar_dir.mkdir(parents=True)
     (resources / "TaskBar.reg").write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
-    shortcut = taskbar_dir / "Google Chrome.lnk"
+    shortcut = taskbar_dir / "Bandizip.lnk"
     shortcut.write_text("shortcut", encoding="utf-8")
     configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources))
 
@@ -137,8 +137,26 @@ def test_taskbar_dry_run_does_not_modify_files_or_run_system_commands(tmp_path: 
     assert result.success is True
     assert result.dry_run is True
     assert result.shortcut_files == (shortcut,)
-    assert any("복사 예정: Google Chrome.lnk" in action for action in result.planned_actions)
+    assert any("복사 예정: Bandizip.lnk" in action for action in result.planned_actions)
     assert shortcut.read_text(encoding="utf-8") == "shortcut"
+
+
+def test_taskbar_dry_run_reports_chrome_dynamic_resolve_without_copying(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    (resources / "TaskBar.reg").write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    (taskbar_dir / "Chrome.lnk").write_text("packaged chrome", encoding="utf-8")
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), FakeCommandRunner())
+
+    result = ApplyTaskbarLayout(configurator).execute(dry_run=True)
+
+    assert result.success is True
+    assert result.dry_run is True
+    assert any("Chrome 바로가기 동적 resolve 예정" in action for action in result.planned_actions)
+    assert not appdata.exists()
 
 
 def test_taskbar_real_apply_requires_command_runner(tmp_path: Path) -> None:
@@ -180,7 +198,7 @@ def test_taskbar_real_apply_uses_temp_appdata_and_fake_commands(tmp_path: Path, 
     taskbar_dir.mkdir(parents=True)
     reg_file = resources / "TaskBar.reg"
     reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
-    shortcut = taskbar_dir / "Google Chrome.lnk"
+    shortcut = taskbar_dir / "Bandizip.lnk"
     shortcut.write_text("shortcut", encoding="utf-8")
 
     appdata = tmp_path / "AppData" / "Roaming"
@@ -201,7 +219,116 @@ def test_taskbar_real_apply_uses_temp_appdata_and_fake_commands(tmp_path: Path, 
     assert result.success is True
     assert result.dry_run is False
     assert not old_shortcut.exists()
-    assert (target_dir / "Google Chrome.lnk").read_text(encoding="utf-8") == "shortcut"
+    assert (target_dir / "Bandizip.lnk").read_text(encoding="utf-8") == "shortcut"
+    assert command_runner.commands == [
+        ("reg", "import", str(reg_file)),
+        ("taskkill", "/F", "/IM", "explorer.exe"),
+        ("explorer.exe",),
+    ]
+
+
+def test_taskbar_real_apply_uses_start_menu_chrome_shortcut_instead_of_resource(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    (taskbar_dir / "Chrome.lnk").write_text("packaged chrome", encoding="utf-8")
+    (taskbar_dir / "PotPlayer.lnk").write_text("potplayer", encoding="utf-8")
+
+    program_data = tmp_path / "ProgramData"
+    start_menu = program_data / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Google"
+    start_menu.mkdir(parents=True)
+    (start_menu / "Google Chrome.lnk").write_text("local chrome", encoding="utf-8")
+
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("ProgramData", str(program_data))
+    monkeypatch.setenv("APPDATA", str(appdata))
+    command_runner = FakeCommandRunner()
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    assert result.success is True
+    assert (target_dir / "Chrome.lnk").read_text(encoding="utf-8") == "local chrome"
+    assert (target_dir / "PotPlayer.lnk").read_text(encoding="utf-8") == "potplayer"
+    assert command_runner.commands == [
+        ("reg", "import", str(reg_file)),
+        ("taskkill", "/F", "/IM", "explorer.exe"),
+        ("explorer.exe",),
+    ]
+
+
+def test_taskbar_real_apply_creates_chrome_shortcut_from_exe_when_start_menu_shortcut_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    (taskbar_dir / "Chrome.lnk").write_text("packaged chrome", encoding="utf-8")
+
+    program_files = tmp_path / "ProgramFiles"
+    chrome_exe = program_files / "Google" / "Chrome" / "Application" / "chrome.exe"
+    chrome_exe.parent.mkdir(parents=True)
+    chrome_exe.write_text("chrome", encoding="utf-8")
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    command_runner = FakeCommandRunner()
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    assert result.success is True
+    assert command_runner.commands[0][0] == "powershell"
+    assert "-EncodedCommand" in command_runner.commands[0]
+    assert command_runner.commands[1] == ("reg", "import", str(reg_file))
+    assert command_runner.commands[2:] == [
+        ("taskkill", "/F", "/IM", "explorer.exe"),
+        ("explorer.exe",),
+    ]
+
+
+def test_taskbar_real_apply_skips_missing_chrome_without_failing_static_shortcuts(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    (taskbar_dir / "Chrome.lnk").write_text("packaged chrome", encoding="utf-8")
+    (taskbar_dir / "Bandizip.lnk").write_text("bandizip", encoding="utf-8")
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "ProgramFiles"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "ProgramFilesX86"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+    command_runner = FakeCommandRunner()
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    assert result.success is True
+    assert "Chrome 설치 또는 바로가기를 찾을 수 없어 Chrome 고정을 건너뜀" in result.message
+    assert not (target_dir / "Chrome.lnk").exists()
+    assert (target_dir / "Bandizip.lnk").read_text(encoding="utf-8") == "bandizip"
     assert command_runner.commands == [
         ("reg", "import", str(reg_file)),
         ("taskkill", "/F", "/IM", "explorer.exe"),
@@ -215,7 +342,7 @@ def test_taskbar_real_apply_succeeds_when_only_explorer_restart_fails(tmp_path: 
     taskbar_dir.mkdir(parents=True)
     reg_file = resources / "TaskBar.reg"
     reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
-    shortcut = taskbar_dir / "Google Chrome.lnk"
+    shortcut = taskbar_dir / "Bandizip.lnk"
     shortcut.write_text("shortcut", encoding="utf-8")
 
     appdata = tmp_path / "AppData" / "Roaming"
@@ -233,7 +360,7 @@ def test_taskbar_real_apply_succeeds_when_only_explorer_restart_fails(tmp_path: 
     assert result.success is True
     assert result.dry_run is False
     assert result.message == "작업표시줄 설정을 적용했습니다."
-    assert (target_dir / "Google Chrome.lnk").read_text(encoding="utf-8") == "shortcut"
+    assert (target_dir / "Bandizip.lnk").read_text(encoding="utf-8") == "shortcut"
     assert command_runner.commands == [
         ("reg", "import", str(reg_file)),
         ("taskkill", "/F", "/IM", "explorer.exe"),
@@ -247,7 +374,7 @@ def test_taskbar_real_apply_fails_when_reg_import_fails(tmp_path: Path, monkeypa
     taskbar_dir.mkdir(parents=True)
     reg_file = resources / "TaskBar.reg"
     reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
-    shortcut = taskbar_dir / "Google Chrome.lnk"
+    shortcut = taskbar_dir / "Bandizip.lnk"
     shortcut.write_text("shortcut", encoding="utf-8")
 
     appdata = tmp_path / "AppData" / "Roaming"
