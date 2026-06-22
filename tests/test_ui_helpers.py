@@ -296,7 +296,7 @@ def test_policy_action_row_compact_threshold() -> None:
     assert not _PolicyActionRow.should_use_compact_layout(620)
 
 
-def test_action_center_settings_table_renders_three_columns(qt_app: QApplication) -> None:
+def test_action_center_settings_table_renders_four_columns(qt_app: QApplication) -> None:
     panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation())
 
     assert not hasattr(panel, "recommended_action_label")
@@ -313,12 +313,14 @@ def test_action_center_settings_table_renders_three_columns(qt_app: QApplication
         "복사 작업은 버튼을 누를 때만 수행됩니다.",
     ):
         assert removed_text not in label_texts
-    assert panel.settings_table.columnCount() == 3
+    assert panel.settings_table.columnCount() == 4
     assert panel.settings_table.horizontalHeaderItem(0).text() == "설정 항목"
-    assert panel.settings_table.horizontalHeaderItem(1).text() == "현재 상태"
-    assert panel.settings_table.horizontalHeaderItem(2).text() == "상세"
-    assert panel.settings_table.item(0, 1).text() == "설정됨"
-    assert panel.settings_table.item(0, 2).text() == "적용 완료"
+    assert panel.settings_table.horizontalHeaderItem(1).text() == "적용 결과"
+    assert panel.settings_table.horizontalHeaderItem(2).text() == "현재 상태"
+    assert panel.settings_table.horizontalHeaderItem(3).text() == "상세"
+    assert panel.settings_table.item(0, 1).text() == "적용됨"
+    assert panel.settings_table.item(0, 2).text() == "설정됨"
+    assert panel.settings_table.item(0, 3).text() == "적용 완료"
     assert panel.power_status_label.objectName() == "statusBadge"
     assert panel.shutdown_status_label.objectName() == "statusBadge"
     assert panel.power_status_label.text() == "정상"
@@ -368,6 +370,38 @@ def test_action_center_win11_only_start_menu_section_tracks_windows_selection(qt
     assert panel.start_menu_section.property("state") == "active"
     assert panel.start_menu_unavailable_label.isHidden()
     assert all(not row.isHidden() for row in panel._win11_setting_rows)
+
+
+def test_action_center_visible_setting_ids_follow_windows_selection(qt_app: QApplication) -> None:
+    settings = _FakeSettings()
+    panel = ActionCenterPanel(settings, _FakePcCheck(), _FakeActivation())
+
+    assert panel.win10_radio.isChecked()
+    assert all(not setting_id.startswith("win11_") for setting_id in panel._visible_setting_ids())
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+
+    visible_ids = panel._visible_setting_ids()
+    assert "win11_start_more_pins" in visible_ids
+    assert "win11_hide_recent_apps" in visible_ids
+
+
+def test_action_center_refresh_and_apply_use_visible_setting_ids(qt_app: QApplication) -> None:
+    settings = _FakeSettings()
+    pc_check = _FakePcCheck()
+    panel = ActionCenterPanel(settings, pc_check, _FakeActivation())
+
+    panel._refresh_status()
+
+    assert settings.check_requests
+    assert all(not setting_id.startswith("win11_") for setting_id in settings.check_requests[-1])
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+    panel._checkboxes["show_file_extensions"].setChecked(True)
+    panel._apply_settings()
+
+    assert settings.apply_requests[-1][0] == ["show_file_extensions"]
+    assert "win11_start_more_pins" in settings.apply_requests[-1][1]
 
     panel.win10_radio.setChecked(True)
 
@@ -568,8 +602,32 @@ def test_app_qss_does_not_keep_unused_tab_widget_styles() -> None:
 
 
 class _FakeSettings:
-    result_rows = [("파일 확장자 표시", "적용됨", "설정됨", "적용 완료")]
-    status_message = ""
+    def __init__(self) -> None:
+        self.result_rows = [("파일 확장자 표시", "적용됨", "설정됨", "적용 완료")]
+        self.status_message = ""
+        self.check_requests: list[list[str]] = []
+        self.apply_requests: list[tuple[list[str], list[str] | None]] = []
+
+    def all_setting_ids(self) -> list[str]:
+        return [
+            "show_file_extensions",
+            "hide_task_view_button",
+            "win11_start_more_pins",
+            "win11_hide_recent_apps",
+        ]
+
+    def check_status(self, setting_ids: list[str]) -> None:
+        self.check_requests.append(list(setting_ids))
+        self.result_rows = [(setting_id, "-", "설정됨", "상태 확인") for setting_id in setting_ids]
+
+    def apply_selected(self, setting_ids: list[str], display_setting_ids: list[str] | None = None) -> None:
+        self.apply_requests.append((list(setting_ids), None if display_setting_ids is None else list(display_setting_ids)))
+        display_ids = display_setting_ids or setting_ids
+        self.result_rows = [
+            (setting_id, "적용됨" if setting_id in setting_ids else "-", "설정됨", "상태 확인")
+            for setting_id in display_ids
+        ]
+        self.status_message = "설정 적용 완료"
 
     @property
     def warning_count(self) -> int:
@@ -581,10 +639,15 @@ class _FakeSettings:
 
 
 class _FakePcCheck:
-    result_rows = [("전원", "정상", "문제 없음")]
-    installed_office_status_text = "현재 감지: Office 2024"
-    power_option_status_text = "전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함, 절전: 안 함, 최대 절전: 안 함"
-    auto_shutdown_status_text = "23시 자동종료 스케줄이 정상 등록되어 있습니다."
+    def __init__(self) -> None:
+        self.result_rows = [("전원", "정상", "문제 없음")]
+        self.installed_office_status_text = "현재 감지: Office 2024"
+        self.power_option_status_text = "전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함, 절전: 안 함, 최대 절전: 안 함"
+        self.auto_shutdown_status_text = "23시 자동종료 스케줄이 정상 등록되어 있습니다."
+        self.run_count = 0
+
+    def run_checks(self) -> None:
+        self.run_count += 1
 
     @property
     def error_count(self) -> int:
