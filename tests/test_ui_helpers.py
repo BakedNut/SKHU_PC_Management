@@ -150,7 +150,8 @@ def test_app_qss_contains_win11_setting_badge_and_disabled_section_styles() -> N
     assert 'QFrame#settingsSection[state="active"]' in APP_QSS
     assert 'QFrame#settingsSection[state="disabled"]' in APP_QSS
     assert "QLabel#sectionDisabledHint" in APP_QSS
-    assert "border: 1px solid transparent;" not in APP_QSS
+    assert 'QFrame#settingsSection[state="disabled"] QLabel#settingBadge[tone="info"]' in APP_QSS
+    assert 'QFrame#settingsSection[state="disabled"] QLabel#cardTitle' in APP_QSS
     assert APP_QSS.count("border: 1px solid #E5E7EB;") >= 3
     assert "Windows 11 선택 시 사용할 수 있습니다." not in APP_QSS
 
@@ -224,7 +225,7 @@ def test_network_panel_hides_successful_adapter_load_message_and_removes_duplica
     assert panel.status_label.isHidden() is True
     label_texts = [label.text() for label in panel.findChildren(QLabel)]
     assert "할당 방식" not in label_texts
-    assert label_texts.count("IP 할당 방식") == 1
+    assert "IP 할당 방식" not in label_texts
     assert panel.current_table.minimumHeight() == 238
     assert panel.current_table.maximumHeight() == 238
     table_rows = [
