@@ -20,10 +20,18 @@ class WindowsScheduledTaskReader:
 $ErrorActionPreference = 'Stop'
 Import-Module ScheduledTasks -ErrorAction Stop
 $taskName = '{escaped_name}'
-$task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+$task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($null -eq $task) {{
+    [PSCustomObject]@{{
+        Exists = $false
+        TaskName = $taskName
+    }} | ConvertTo-Json -Depth 4
+    exit 0
+}}
 $action = $task.Actions | Select-Object -First 1
 $trigger = $task.Triggers | Select-Object -First 1
 [PSCustomObject]@{{
+    Exists = $true
     TaskName = $task.TaskName
     State = [string]$task.State
     Execute = [string]$action.Execute
@@ -44,6 +52,9 @@ $trigger = $task.Triggers | Select-Object -First 1
         try:
             output = self.command_runner.run(command)
         except Exception as exc:
+            message = str(exc)
+            if _looks_like_task_not_found_error(message):
+                return ScheduledTaskInfo(name=name, exists=False)
             return ScheduledTaskInfo(name=name, exists=False, error=str(exc))
 
         return parse_scheduled_task_json(name, output)
@@ -62,6 +73,10 @@ def parse_scheduled_task_json(name: str, output: str) -> ScheduledTaskInfo:
         parsed = parsed[0] if parsed else None
 
     if not isinstance(parsed, dict):
+        return ScheduledTaskInfo(name=name, exists=False, raw=parsed)
+
+    exists_value = _read_first_present(parsed, ("Exists", "exists"))
+    if _boolish(exists_value) is False:
         return ScheduledTaskInfo(name=name, exists=False, raw=parsed)
 
     task_name = _read_first_present(parsed, ("TaskName", "taskName")) or name
@@ -110,6 +125,35 @@ def _read_first_present(source: object, names: tuple[str, ...]) -> Any:
         if name in source:
             return source[name]
     return None
+
+
+def _boolish(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().casefold()
+    if text in {"true", "1", "yes"}:
+        return True
+    if text in {"false", "0", "no"}:
+        return False
+    return None
+
+
+def _looks_like_task_not_found_error(message: str) -> bool:
+    normalized = message.casefold()
+    return any(
+        token in normalized
+        for token in (
+            "no msft_scheduledtask objects found",
+            "cannot find",
+            "not found",
+            "does not exist",
+            "지정된 작업",
+            "찾을 수 없습니다",
+            "개체를 찾을 수 없습니다",
+        )
+    )
 
 
 def _parse_time(value: object) -> str | None:

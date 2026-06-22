@@ -9,9 +9,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QTableWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QMessageBox, QPushButton, QTableWidget
 
+from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
+from skhu_pc_management.domain.settings.models import ApplyResult
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
+from skhu_pc_management.presentation.qt.panels.pc_info_panel import PcInfoPanel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
 from skhu_pc_management.presentation.qt.widgets.buttons import info_button, primary_button, warning_button
@@ -171,6 +174,14 @@ def test_app_qss_contains_info_button_role() -> None:
     assert "color: #1D4ED8;" in APP_QSS
 
 
+def test_app_qss_contains_pc_action_primary_button_styles() -> None:
+    assert "QPushButton#pcActionPrimaryButton" in APP_QSS
+    assert "QPushButton#pcActionPrimaryButton:hover" in APP_QSS
+    assert "QPushButton#pcActionPrimaryButton:pressed" in APP_QSS
+    assert "QPushButton#pcActionPrimaryButton:disabled" in APP_QSS
+    assert "min-height: 54px;" in APP_QSS
+
+
 def test_combo_with_arrow_wraps_combobox_with_visible_indicator(qt_app: QApplication) -> None:
     combo = QComboBox()
 
@@ -223,6 +234,38 @@ def test_network_panel_hides_successful_adapter_load_message_and_removes_duplica
     assert ("네트워크 어댑터", "이더넷") in table_rows
     assert ("IP 할당 방식", "수동 IP") in table_rows
     assert ("IP 주소", "192.168.0.10") in table_rows
+
+
+def test_pc_info_panel_has_single_pc_name_action_button(qt_app: QApplication) -> None:
+    panel = PcInfoPanel(_FakePcInfo())
+
+    assert panel.rename_button.text() == "PC 이름 변경"
+    assert panel.rename_button.objectName() == "pcActionPrimaryButton"
+    assert panel.rename_button.minimumHeight() == 54
+    assert not hasattr(panel, "auto_rename_button")
+
+
+def test_pc_info_panel_opens_windows_settings_without_input_dialog(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view_model = _FakePcInfo()
+    panel = PcInfoPanel(view_model)
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, message: messages.append((title, message)))
+
+    panel._rename_pc()
+
+    assert view_model.open_pc_name_settings_calls == 1
+    assert messages == [("PC 이름 변경", "Windows 설정을 열었습니다.")]
+
+
+def test_pc_info_panel_disables_pc_name_button_in_test_mode(qt_app: QApplication) -> None:
+    panel = PcInfoPanel(_FakePcInfo(), test_mode=True)
+
+    assert panel.rename_button.isEnabled() is False
+    assert TEST_MODE_DISABLED_MESSAGE in panel.rename_button.toolTip()
 
 
 def test_classroom_summary_formatter_shortens_status_text() -> None:
@@ -631,6 +674,39 @@ class _FakeSettings:
     @property
     def summary_text(self) -> str:
         return "모든 항목 정상"
+
+
+class _FakePcInfo:
+    def __init__(self) -> None:
+        self.status_message = "대기 중"
+        self.pc_name = "PC01"
+        self.user_name = "student"
+        self.windows_version = "Windows 11"
+        self.windows_version_detail = "26100.1 (64비트)"
+        self.cpu = "CPU"
+        self.ram = "16GB"
+        self.gpu = "GPU"
+        self.gpu_memory = "8GB"
+        self.ipv4_address = "192.168.0.10"
+        self.mac_address = "AA-BB-CC-DD-EE-FF"
+        self.disk_nvme_summary = "1개"
+        self.disk_ssd_summary = "없음"
+        self.disk_hdd_summary = "없음"
+        self.disk_unknown_summary = "없음"
+        self.tpm_version = "2.0"
+        self.tpm_status_text = "설치됨"
+        self.secure_boot_status_text = "사용"
+        self.boot_mode = "UEFI"
+        self.disks: list[tuple[str, str, str, str]] = []
+        self.open_pc_name_settings_calls = 0
+
+    def refresh(self) -> None:
+        self.status_message = "PC 정보를 불러왔습니다."
+
+    def open_pc_name_settings(self) -> ApplyResult:
+        self.open_pc_name_settings_calls += 1
+        self.status_message = "Windows 설정을 열었습니다."
+        return ApplyResult(name="PC 이름 변경", success=True, status="opened", message=self.status_message)
 
 
 class _FakePcCheck:

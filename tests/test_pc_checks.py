@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -45,6 +46,10 @@ from skhu_pc_management.infrastructure.windows.latest_version_provider import (
     parse_latest_potplayer_version,
 )
 from skhu_pc_management.infrastructure.windows.power_settings_reader import WindowsPowerSettingsReader
+from skhu_pc_management.infrastructure.windows.windows_scheduled_task_reader import (
+    WindowsScheduledTaskReader,
+    parse_scheduled_task_json,
+)
 
 
 class FakeInstalledProgramReader:
@@ -131,6 +136,21 @@ class FakeCommandRunner:
         command_tuple = tuple(command)
         self.commands.append(command_tuple)
         return self.output
+
+
+class FailingCommandRunner:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(self, command: Sequence[str]) -> str:
+        self.commands.append(tuple(command))
+        raise self.error
+
+
+def _decode_encoded_powershell_command(command: tuple[str, ...]) -> str:
+    encoded = command[command.index("-EncodedCommand") + 1]
+    return base64.b64decode(encoded).decode("utf-16le")
 
 
 class FakeRegistry:
@@ -732,6 +752,58 @@ def test_auto_shutdown_schedule_check_reports_unknown_when_reader_fails() -> Non
 
     assert result.status == CheckStatus.UNKNOWN
     assert result.message == "자동종료 스케줄 상태를 확인할 수 없습니다."
+
+
+def test_parse_scheduled_task_json_handles_exists_false() -> None:
+    task = parse_scheduled_task_json("23시 자동 종료", '{"Exists": false, "TaskName": "23시 자동 종료"}')
+
+    assert task.exists is False
+    assert task.error is None
+    assert task.raw == {"Exists": False, "TaskName": "23시 자동 종료"}
+
+
+def test_windows_scheduled_task_reader_returns_missing_task_without_error() -> None:
+    runner = FakeCommandRunner('{"Exists": false, "TaskName": "23시 자동 종료"}')
+
+    task = WindowsScheduledTaskReader(runner).get_task("23시 자동 종료")
+
+    assert task.exists is False
+    assert task.error is None
+
+
+def test_windows_scheduled_task_reader_script_emits_exists_false_for_missing_task() -> None:
+    runner = FakeCommandRunner('{"Exists": false, "TaskName": "23시 자동 종료"}')
+
+    WindowsScheduledTaskReader(runner).get_task("23시 자동 종료")
+
+    script = _decode_encoded_powershell_command(runner.commands[0])
+    assert "Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue" in script
+    assert "Exists = $false" in script
+    assert "Exists = $true" in script
+
+
+def test_windows_scheduled_task_reader_fallback_maps_task_not_found_error_to_missing() -> None:
+    runner = FailingCommandRunner(RuntimeError("No MSFT_ScheduledTask objects found with property 'TaskName'"))
+
+    task = WindowsScheduledTaskReader(runner).get_task("23시 자동 종료")
+
+    assert task.exists is False
+    assert task.error is None
+
+
+def test_parse_scheduled_task_json_failure_remains_error() -> None:
+    task = parse_scheduled_task_json("23시 자동 종료", "{bad json")
+
+    assert task.exists is False
+    assert task.error is not None
+    assert "ScheduledTasks JSON parse failed" in task.error
+
+
+def test_parse_scheduled_task_json_empty_output_remains_missing_without_error() -> None:
+    task = parse_scheduled_task_json("23시 자동 종료", "")
+
+    assert task.exists is False
+    assert task.error is None
 
 
 def test_recycle_bin_check_reports_non_empty_warning() -> None:

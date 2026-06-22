@@ -110,6 +110,15 @@ class FakeActivation:
         return ActivationResult(True, self.action, "prepared", "process", True)
 
 
+class FakeOpenPcNameSettings:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def execute(self) -> ApplyResult:
+        self.calls += 1
+        return ApplyResult(name="PC 이름 변경", success=True, status="opened", message="Windows 설정을 열었습니다.")
+
+
 def test_pc_info_viewmodel_refresh_updates_rows() -> None:
     view_model = PcInfoViewModel(FakeLoadPcInfo())
 
@@ -126,6 +135,18 @@ def test_pc_info_viewmodel_refresh_updates_rows() -> None:
     assert view_model.disk_nvme_summary == "1개(512GB x1)"
     assert ("GPU 메모리", "8GB") in view_model.rows
     assert ("IPv4 주소", "192.168.0.10") in view_model.rows
+
+
+def test_pc_info_viewmodel_opens_pc_name_settings() -> None:
+    open_settings = FakeOpenPcNameSettings()
+    view_model = PcInfoViewModel(FakeLoadPcInfo(), open_settings)
+
+    result = view_model.open_pc_name_settings()
+
+    assert result is not None
+    assert result.success is True
+    assert open_settings.calls == 1
+    assert view_model.status_message == "Windows 설정을 열었습니다."
 
 
 def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
