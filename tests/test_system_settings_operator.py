@@ -22,7 +22,7 @@ class FakeCommandRunner:
         return ""
 
 
-def test_disable_password_expiration_applies_computer_policy_and_all_enabled_users() -> None:
+def test_disable_password_expiration_applies_policy_and_best_effort_user_flags() -> None:
     runner = FakeCommandRunner()
     operator = WindowsSystemSettingsOperator(FakeRegistry(), runner)
 
@@ -37,6 +37,13 @@ def test_disable_password_expiration_applies_computer_policy_and_all_enabled_use
     assert "Get-LocalUser -ErrorAction Stop" in script
     assert "Where-Object { $_.Enabled -eq $true }" in script
     assert "Set-LocalUser -Name $user.Name -PasswordNeverExpires $true -ErrorAction Stop" in script
-    assert "FailedUsers" in script
+    assert "Guest" in script
+    assert "DefaultAccount" in script
+    assert "WDAGUtilityAccount" in script
+    assert "SetFailures" in script
+    assert "RemainingUsers" in script
+    assert "ConvertTo-Json" in script
     assert "PasswordNeverExpires -ne $true" in script
+    assert "암호 만료 비활성화 적용 실패 사용자" not in script
+    assert "$failedUsers.Count -gt 0" not in script
     assert "$env:USERNAME" not in script

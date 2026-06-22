@@ -101,10 +101,11 @@ def test_taskbar_layout_status_provider_compares_source_and_target(monkeypatch, 
     assert "실제 pin 상태" in status.detail
 
 
-def test_password_expiration_status_provider_reports_expiring_user() -> None:
+def test_password_expiration_status_provider_reports_general_remaining_user_as_detail_only() -> None:
     user_output = """
 [
-  {"Name": "student", "Enabled": true, "PasswordNeverExpires": false},
+  {"Name": "AS", "Enabled": true, "PasswordNeverExpires": false},
+  {"Name": "Teacher", "Enabled": true, "PasswordNeverExpires": true},
   {"Name": "disabled", "Enabled": false, "PasswordNeverExpires": false}
 ]
 """
@@ -112,10 +113,31 @@ def test_password_expiration_status_provider_reports_expiring_user() -> None:
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 
-    assert status.is_configured is False
-    assert status.status_text == "not_configured"
-    assert "student" in status.detail
+    assert status.is_configured is True
+    assert status.is_applied is True
+    assert status.severity == "ok"
+    assert status.status_text == "configured"
+    assert "개별 플래그 미반영 사용자: AS" in status.detail
     assert runner.commands[1] == ("net", "accounts")
+
+
+def test_password_expiration_status_provider_excludes_builtin_guest_from_failure() -> None:
+    user_output = """
+[
+  {"Name": "Teacher", "Enabled": true, "PasswordNeverExpires": true},
+  {"Name": "Guest", "Enabled": true, "PasswordNeverExpires": false}
+]
+"""
+    runner = FakeCommandRunner([user_output, "Maximum password age (days): Unlimited"])
+
+    status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
+
+    assert status.is_configured is True
+    assert status.is_applied is True
+    assert status.severity == "ok"
+    assert "최대 암호 사용 기간: 무제한" in status.detail
+    assert "개별 플래그 미반영 사용자: 없음" in status.detail
+    assert "제외된 내장 계정: Guest" in status.detail
 
 
 def test_password_expiration_status_provider_reports_configured_when_policy_and_users_match() -> None:
@@ -131,7 +153,7 @@ def test_password_expiration_status_provider_reports_configured_when_policy_and_
     assert status.is_configured is True
     assert status.status_text == "configured"
     assert "최대 암호 사용 기간: 무제한" in status.detail
-    assert "암호 만료 대상 사용자: 없음" in status.detail
+    assert "개별 플래그 미반영 사용자: 없음" in status.detail
 
 
 def test_password_expiration_status_provider_warns_when_max_password_age_is_numeric() -> None:

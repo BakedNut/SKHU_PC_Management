@@ -14,6 +14,9 @@ from skhu_pc_management.ports.registry import Registry
 from skhu_pc_management.ports.resource_resolver import ResourceResolver
 
 
+_BUILT_IN_LOCAL_ACCOUNT_NAMES = {"Guest", "DefaultAccount", "WDAGUtilityAccount"}
+
+
 @dataclass(frozen=True)
 class DefaultWallpaperStatusProvider:
     registry: Registry
@@ -143,23 +146,35 @@ class PasswordExpirationStatusProvider:
         if max_password_age_unlimited is None:
             return _unknown(setting_id, label, "컴퓨터 암호 정책의 최대 암호 사용 기간을 확인할 수 없습니다.")
 
-        expiring_users = [
+        excluded_users = [
             str(user.get("Name"))
             for user in enabled_users
-            if _boolish(user.get("PasswordNeverExpires")) is not True
+            if _is_excluded_password_expiration_user(user.get("Name"))
+        ]
+        remaining_users = [
+            str(user.get("Name"))
+            for user in enabled_users
+            if not _is_excluded_password_expiration_user(user.get("Name"))
+            and _boolish(user.get("PasswordNeverExpires")) is not True
         ]
         max_password_age_display = "무제한" if max_password_age_unlimited else _max_password_age_display(net_accounts_output)
-        expiring_users_display = ", ".join(expiring_users) if expiring_users else "없음"
-        detail = f"최대 암호 사용 기간: {max_password_age_display} / 암호 만료 대상 사용자: {expiring_users_display}"
-        configured = max_password_age_unlimited and not expiring_users
+        detail_parts = [f"최대 암호 사용 기간: {max_password_age_display}"]
+        if remaining_users:
+            detail_parts.append(f"개별 플래그 미반영 사용자: {', '.join(remaining_users)}")
+        else:
+            detail_parts.append("개별 플래그 미반영 사용자: 없음")
+        if excluded_users:
+            detail_parts.append(f"제외된 내장 계정: {', '.join(excluded_users)}")
+        detail = " / ".join(detail_parts)
+        configured = max_password_age_unlimited
         if configured:
-            summary = "사용자 계정 암호 만료가 비활성화되어 있습니다."
-        elif not max_password_age_unlimited and expiring_users:
+            summary = "사용자 계정 암호 만료 정책이 비활성화되어 있습니다."
+        elif not max_password_age_unlimited and remaining_users:
             summary = "사용자 계정 암호 만료 설정 확인이 필요합니다."
         elif not max_password_age_unlimited:
             summary = "컴퓨터 암호 정책의 최대 암호 사용 기간이 무제한이 아닙니다."
         else:
-            summary = "암호 만료 비활성화가 필요한 사용자가 있습니다."
+            summary = "사용자 계정 암호 만료 상태를 확인할 수 없습니다."
         detail = f"{summary} {detail}"
         return SettingStatus(
             setting_id=setting_id,
@@ -230,6 +245,10 @@ def _boolish(value: object) -> bool | None:
         if normalized in {"false", "no", "n", "0", "아니요"}:
             return False
     return None
+
+
+def _is_excluded_password_expiration_user(name: object) -> bool:
+    return str(name or "").strip() in _BUILT_IN_LOCAL_ACCOUNT_NAMES
 
 
 def _is_max_password_age_unlimited(output: str) -> bool | None:
