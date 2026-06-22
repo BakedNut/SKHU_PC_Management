@@ -252,14 +252,59 @@ def test_pc_info_panel_opens_windows_settings_without_input_dialog(
 ) -> None:
     view_model = _FakePcInfo()
     panel = PcInfoPanel(view_model)
-    messages: list[tuple[str, str]] = []
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, message: messages.append((title, message)))
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
 
     panel._rename_pc()
 
     assert view_model.open_pc_name_settings_calls == 1
-    assert messages == [("PC 이름 변경", "Windows 설정을 열었습니다.")]
+    assert information_messages == []
+    assert warning_messages == []
+    assert panel.status_label.text() == "Windows 설정을 열었습니다."
+
+
+def test_pc_info_panel_shows_warning_when_windows_settings_open_fails(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view_model = _FakePcInfo()
+    view_model.open_pc_name_settings_result = ApplyResult(
+        name="PC 이름 변경",
+        success=False,
+        status="failed",
+        message="Windows 설정을 열 수 없습니다.",
+    )
+    panel = PcInfoPanel(view_model)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._rename_pc()
+
+    assert view_model.open_pc_name_settings_calls == 1
+    assert information_messages == []
+    assert warning_messages == [("PC 이름 변경 실패", "Windows 설정을 열 수 없습니다.")]
 
 
 def test_pc_info_panel_disables_pc_name_button_in_test_mode(qt_app: QApplication) -> None:
@@ -627,6 +672,85 @@ def test_action_center_activation_buttons_use_current_radio_selection(qt_app: QA
     assert activation.office_requests[-1] == "2024"
 
 
+def test_action_center_program_launch_success_does_not_show_popup(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _FakeLaunchProgram(ApplyResult(name="Chrome 실행", success=True, status="launched", message="Chrome을 실행했습니다."))
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=launcher)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._launch_program("chrome")
+
+    assert launcher.requests == ["chrome"]
+    assert information_messages == []
+    assert warning_messages == []
+
+
+def test_action_center_program_launch_failure_shows_warning(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _FakeLaunchProgram(ApplyResult(name="Chrome 실행", success=False, status="failed", message="Chrome을 찾을 수 없습니다."))
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=launcher)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._launch_program("chrome")
+
+    assert launcher.requests == ["chrome"]
+    assert information_messages == []
+    assert warning_messages == [("실행 실패", "Chrome을 찾을 수 없습니다.")]
+
+
+def test_action_center_program_launch_unconfigured_still_shows_information(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=None)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._launch_program("chrome")
+
+    assert information_messages == [("미구성", "프로그램 실행 기능이 구성되지 않았습니다.")]
+    assert warning_messages == []
+
+
 def test_action_center_summary_treats_cannot_confirm_messages_as_unknown() -> None:
     assert _short_shutdown_status("자동종료 스케줄 상태를 확인할 수 없습니다.") == (
         "확인 불가",
@@ -700,14 +824,30 @@ class _FakePcInfo:
         self.boot_mode = "UEFI"
         self.disks: list[tuple[str, str, str, str]] = []
         self.open_pc_name_settings_calls = 0
+        self.open_pc_name_settings_result = ApplyResult(
+            name="PC 이름 변경",
+            success=True,
+            status="opened",
+            message="Windows 설정을 열었습니다.",
+        )
 
     def refresh(self) -> None:
         self.status_message = "PC 정보를 불러왔습니다."
 
     def open_pc_name_settings(self) -> ApplyResult:
         self.open_pc_name_settings_calls += 1
-        self.status_message = "Windows 설정을 열었습니다."
-        return ApplyResult(name="PC 이름 변경", success=True, status="opened", message=self.status_message)
+        self.status_message = self.open_pc_name_settings_result.message
+        return self.open_pc_name_settings_result
+
+
+class _FakeLaunchProgram:
+    def __init__(self, result: ApplyResult) -> None:
+        self.result = result
+        self.requests: list[str] = []
+
+    def execute(self, program_id: str) -> ApplyResult:
+        self.requests.append(program_id)
+        return self.result
 
 
 class _FakePcCheck:
