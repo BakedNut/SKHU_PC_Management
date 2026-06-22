@@ -104,8 +104,6 @@ class WindowsTaskbarConfigurator:
                 shutil.copy2(shortcut, target_dir / shortcut.name)
             if validation.reg_file is not None:
                 self.command_runner.run(("reg", "import", str(validation.reg_file)))
-            self.command_runner.run(("taskkill", "/F", "/IM", "explorer.exe"))
-            self.command_runner.run(("explorer.exe",))
         except Exception as exc:
             return TaskbarApplyResult(
                 success=False,
@@ -115,6 +113,12 @@ class WindowsTaskbarConfigurator:
                 shortcut_files=validation.shortcut_files,
                 planned_actions=planned_actions,
             )
+
+        for command in (("taskkill", "/F", "/IM", "explorer.exe"), ("explorer.exe",)):
+            try:
+                self.command_runner.run(command)
+            except Exception:
+                pass
 
         return TaskbarApplyResult(
             success=True,

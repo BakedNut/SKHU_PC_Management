@@ -136,12 +136,12 @@ def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
     assert view_model.summary_text == "상태 확인 필요"
 
     view_model.check_status(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정 hide_frequent_folders", "-", "설정됨", "0")]
+    assert view_model.result_rows == [("설정 hide_frequent_folders", "설정됨", "0")]
     assert view_model.summary_text == "모든 항목 정상"
     assert check_status.requests == [["hide_frequent_folders"]]
 
     view_model.apply_selected(["hide_frequent_folders"], display_setting_ids=["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정 hide_frequent_folders", "적용됨", "설정됨", "ok / 0")]
+    assert view_model.result_rows == [("설정 hide_frequent_folders", "설정됨", "0")]
     assert apply_settings.requests == [["hide_frequent_folders"]]
     assert check_status.requests == [["hide_frequent_folders"], ["hide_frequent_folders"]]
 
@@ -159,17 +159,20 @@ def test_settings_viewmodel_apply_selected_rechecks_display_setting_ids() -> Non
     assert apply_settings.requests == [["show_file_extensions"]]
     assert check_status.requests == [["show_file_extensions", "hide_task_view_button"]]
     assert view_model.result_rows == [
-        ("설정 show_file_extensions", "적용됨", "설정됨", "ok / 0"),
-        ("설정 hide_task_view_button", "-", "설정됨", "0"),
+        ("설정 show_file_extensions", "설정됨", "0"),
+        ("설정 hide_task_view_button", "설정됨", "0"),
     ]
+    assert all(len(row) == 3 for row in view_model.result_rows)
+    assert all("ok" not in row[2] for row in view_model.result_rows)
+    assert all("Applied." not in row[2] for row in view_model.result_rows)
 
 
 def test_settings_viewmodel_summary_counts_attention_rows() -> None:
     view_model = SettingsViewModel(FakeCheckSettingsStatus(), FakeApplySettings())
     view_model.result_rows = [
-        ("정상 설정", "-", "설정됨", ""),
-        ("미설정 설정", "-", "미설정", "실제값 1"),
-        ("확인 불가 설정", "-", "확인 불가", "권한 부족"),
+        ("정상 설정", "설정됨", ""),
+        ("미설정 설정", "미설정", "실제값 1"),
+        ("확인 불가 설정", "확인 불가", "권한 부족"),
     ]
 
     assert view_model.warning_count == 2

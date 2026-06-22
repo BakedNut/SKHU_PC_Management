@@ -296,7 +296,7 @@ def test_policy_action_row_compact_threshold() -> None:
     assert not _PolicyActionRow.should_use_compact_layout(620)
 
 
-def test_action_center_settings_table_renders_four_columns(qt_app: QApplication) -> None:
+def test_action_center_settings_table_renders_three_status_columns(qt_app: QApplication) -> None:
     panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation())
 
     assert not hasattr(panel, "recommended_action_label")
@@ -313,14 +313,12 @@ def test_action_center_settings_table_renders_four_columns(qt_app: QApplication)
         "복사 작업은 버튼을 누를 때만 수행됩니다.",
     ):
         assert removed_text not in label_texts
-    assert panel.settings_table.columnCount() == 4
+    assert panel.settings_table.columnCount() == 3
     assert panel.settings_table.horizontalHeaderItem(0).text() == "설정 항목"
-    assert panel.settings_table.horizontalHeaderItem(1).text() == "적용 결과"
-    assert panel.settings_table.horizontalHeaderItem(2).text() == "현재 상태"
-    assert panel.settings_table.horizontalHeaderItem(3).text() == "상세"
-    assert panel.settings_table.item(0, 1).text() == "적용됨"
-    assert panel.settings_table.item(0, 2).text() == "설정됨"
-    assert panel.settings_table.item(0, 3).text() == "적용 완료"
+    assert panel.settings_table.horizontalHeaderItem(1).text() == "현재 상태"
+    assert panel.settings_table.horizontalHeaderItem(2).text() == "상세"
+    assert panel.settings_table.item(0, 1).text() == "설정됨"
+    assert panel.settings_table.item(0, 2).text() == "적용 완료"
     assert panel.power_status_label.objectName() == "statusBadge"
     assert panel.shutdown_status_label.objectName() == "statusBadge"
     assert panel.power_status_label.text() == "정상"
@@ -603,7 +601,7 @@ def test_app_qss_does_not_keep_unused_tab_widget_styles() -> None:
 
 class _FakeSettings:
     def __init__(self) -> None:
-        self.result_rows = [("파일 확장자 표시", "적용됨", "설정됨", "적용 완료")]
+        self.result_rows = [("파일 확장자 표시", "설정됨", "적용 완료")]
         self.status_message = ""
         self.check_requests: list[list[str]] = []
         self.apply_requests: list[tuple[list[str], list[str] | None]] = []
@@ -618,15 +616,12 @@ class _FakeSettings:
 
     def check_status(self, setting_ids: list[str]) -> None:
         self.check_requests.append(list(setting_ids))
-        self.result_rows = [(setting_id, "-", "설정됨", "상태 확인") for setting_id in setting_ids]
+        self.result_rows = [(setting_id, "설정됨", "상태 확인") for setting_id in setting_ids]
 
     def apply_selected(self, setting_ids: list[str], display_setting_ids: list[str] | None = None) -> None:
         self.apply_requests.append((list(setting_ids), None if display_setting_ids is None else list(display_setting_ids)))
         display_ids = display_setting_ids or setting_ids
-        self.result_rows = [
-            (setting_id, "적용됨" if setting_id in setting_ids else "-", "설정됨", "상태 확인")
-            for setting_id in display_ids
-        ]
+        self.result_rows = [(setting_id, "설정됨", "상태 확인") for setting_id in display_ids]
         self.status_message = "설정 적용 완료"
 
     @property

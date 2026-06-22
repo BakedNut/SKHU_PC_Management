@@ -153,8 +153,11 @@ def test_post_command_failure_is_reported_as_warning_without_flipping_apply_resu
 
     assert result.results[0].success is True
     assert result.results[0].status == "applied"
-    assert "후처리 경고" in result.results[0].message
+    assert result.results[0].message == "Applied."
+    assert "explorer.exe" not in result.results[0].message
+    assert "Command failed" not in result.results[0].message
     assert "Post command failed" not in result.results[0].message
+    assert "후처리 경고" not in result.results[0].message
     assert STOP_EXPLORER_COMMAND in command_runner.commands
     assert START_EXPLORER_COMMAND in command_runner.commands
 

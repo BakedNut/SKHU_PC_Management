@@ -30,6 +30,18 @@ class FakeCommandRunner:
         return ""
 
 
+class FailingCommandRunner(FakeCommandRunner):
+    def __init__(self, failing_command: str) -> None:
+        super().__init__()
+        self.failing_command = failing_command
+
+    def run(self, command: tuple[str, ...]) -> str:
+        self.commands.append(tuple(command))
+        if command and command[0] == self.failing_command:
+            raise RuntimeError(f"{self.failing_command} failed")
+        return ""
+
+
 class FakeResourceResolver:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -195,3 +207,59 @@ def test_taskbar_real_apply_uses_temp_appdata_and_fake_commands(tmp_path: Path, 
         ("taskkill", "/F", "/IM", "explorer.exe"),
         ("explorer.exe",),
     ]
+
+
+def test_taskbar_real_apply_succeeds_when_only_explorer_restart_fails(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    shortcut = taskbar_dir / "Google Chrome.lnk"
+    shortcut.write_text("shortcut", encoding="utf-8")
+
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    target_dir = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+
+    command_runner = FailingCommandRunner("explorer.exe")
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    assert result.success is True
+    assert result.dry_run is False
+    assert result.message == "작업표시줄 설정을 적용했습니다."
+    assert (target_dir / "Google Chrome.lnk").read_text(encoding="utf-8") == "shortcut"
+    assert command_runner.commands == [
+        ("reg", "import", str(reg_file)),
+        ("taskkill", "/F", "/IM", "explorer.exe"),
+        ("explorer.exe",),
+    ]
+
+
+def test_taskbar_real_apply_fails_when_reg_import_fails(tmp_path: Path, monkeypatch) -> None:
+    resources = tmp_path / "resources"
+    taskbar_dir = resources / "TaskBar"
+    taskbar_dir.mkdir(parents=True)
+    reg_file = resources / "TaskBar.reg"
+    reg_file.write_text("Windows Registry Editor Version 5.00", encoding="utf-8")
+    shortcut = taskbar_dir / "Google Chrome.lnk"
+    shortcut.write_text("shortcut", encoding="utf-8")
+
+    appdata = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    command_runner = FailingCommandRunner("reg")
+    configurator = WindowsTaskbarConfigurator(FakeResourceResolver(resources), command_runner)
+
+    result = ApplyTaskbarLayout(
+        configurator,
+        safety_guard=SafetyGuard(allow_real_taskbar_apply=True),
+    ).execute(dry_run=False)
+
+    assert result.success is False
+    assert "작업표시줄 설정 적용 실패" in result.message
+    assert command_runner.commands == [("reg", "import", str(reg_file))]

@@ -336,10 +336,10 @@ class ActionCenterPanel(QWidget):
 
     def _settings_status_card(self) -> QWidget:
         card = Card("시스템 설정 적용 상태")
-        self.settings_table = QTableWidget(0, 4)
-        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "적용 결과", "현재 상태", "상세"])
+        self.settings_table = QTableWidget(0, 3)
+        self.settings_table.setHorizontalHeaderLabels(["설정 항목", "현재 상태", "상세"])
         configure_table(self.settings_table, compact=True)
-        set_column_widths(self.settings_table, (220, 86, 110))
+        set_column_widths(self.settings_table, (220, 110))
         self.settings_table.setMinimumHeight(260)
         card.body_layout.addWidget(self.settings_table)
         return card
@@ -480,15 +480,13 @@ class ActionCenterPanel(QWidget):
         self.settings_table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             name = row[0] if row else ""
-            apply_status = row[1] if len(row) > 1 else ""
-            current_status = row[2] if len(row) > 2 else ""
-            detail = row[3] if len(row) > 3 else ""
+            current_status = row[1] if len(row) > 1 else ""
+            detail = row[2] if len(row) > 2 else ""
             self.settings_table.setItem(row_index, 0, table_item(name))
-            self.settings_table.setItem(row_index, 1, status_item(apply_status))
-            self.settings_table.setItem(row_index, 2, status_item(current_status))
+            self.settings_table.setItem(row_index, 1, status_item(current_status))
             detail_item = table_item(detail)
             detail_item.setToolTip(detail)
-            self.settings_table.setItem(row_index, 3, detail_item)
+            self.settings_table.setItem(row_index, 2, detail_item)
 
     def _render_pc_check_rows(self) -> None:
         rows = self._pc_check.result_rows
