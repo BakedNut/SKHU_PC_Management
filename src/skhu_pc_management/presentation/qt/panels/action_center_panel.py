@@ -556,6 +556,9 @@ class ActionCenterPanel(QWidget):
             if self._busy_coordinator:
                 self._busy_coordinator.end("상태 새로고침이 완료되었습니다.")
 
+    def load_initial_status(self) -> None:
+        self._refresh_status()
+
     def _prepare_windows_activation(self) -> None:
         if self._test_mode:
             self._activation.status_message = TEST_MODE_DISABLED_MESSAGE
@@ -668,7 +671,6 @@ class ActionCenterPanel(QWidget):
         try:
             result = self._launch_program_use_case.execute(program_id)
             self._show_failure_result(result, "실행 실패")
-            self._refresh_after_action()
         finally:
             if self._busy_coordinator:
                 self._busy_coordinator.end(getattr(result, "message", "작업이 완료되었습니다."))

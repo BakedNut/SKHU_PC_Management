@@ -18,7 +18,7 @@ class NetworkViewModel:
     current_network_info_rows: list[tuple[str, str]] = field(default_factory=list)
     ip_status_text: str = "확인 불가"
     validation_message: str = ""
-    status_message: str = "네트워크 어댑터를 불러오지 않았습니다."
+    status_message: str = "어댑터 새로고침을 눌러 네트워크 정보를 불러오세요."
     is_busy: bool = False
     reload_sleep: Callable[[float], None] = time.sleep
     reload_retry_delay_seconds: float = 0.5

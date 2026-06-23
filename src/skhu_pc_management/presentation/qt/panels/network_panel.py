@@ -169,6 +169,9 @@ class NetworkPanel(QWidget):
             if self._busy_coordinator:
                 self._busy_coordinator.end(self._view_model.status_message)
 
+    def load_adapters(self) -> None:
+        self._load_adapters()
+
     def _fill_defaults(self) -> None:
         defaults = self._view_model.default_static_ip_fields()
         self.ip_input.setText(defaults["ip_address"])
