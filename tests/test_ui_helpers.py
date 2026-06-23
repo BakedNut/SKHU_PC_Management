@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QMessageBox, QPus
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.domain.settings.models import ApplyResult
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
+from skhu_pc_management.presentation.qt import main_window as main_window_module
 from skhu_pc_management.presentation.qt.panels.pc_info_panel import PcInfoPanel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
@@ -38,6 +39,8 @@ from skhu_pc_management.presentation.qt.panels.action_center_panel import (
     _short_power_status,
     _short_shutdown_status,
 )
+from skhu_pc_management.presentation.qt.main_window import MainWindow
+from skhu_pc_management.presentation.qt.startup_coordinator import StartupResult
 
 
 @pytest.fixture(scope="module")
@@ -251,6 +254,125 @@ def test_network_panel_hides_successful_adapter_load_message_and_removes_duplica
     assert ("IP 주소", "192.168.0.10") in table_rows
 
 
+def test_main_window_startup_does_not_auto_load_action_center_or_network(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduled_callbacks: list[object] = []
+    monkeypatch.setattr(
+        main_window_module.QTimer,
+        "singleShot",
+        lambda _msec, callback: scheduled_callbacks.append(callback),
+    )
+
+    pc_info = _FakePcInfo()
+    settings = _FakeSettings()
+    pc_check = _FakePcCheck()
+    network = NetworkViewModel(_FakeListNetworkAdapters(), _FakeApplyStaticIp(), _FakeSetDhcp(), reload_sleep=lambda _: None)
+    startup = _FakeStartupCoordinator()
+    window = MainWindow(
+        pc_info,
+        settings,
+        network,
+        pc_check,
+        _FakeActivation(),
+        _FakeAgentReport(),
+        startup,
+    )
+    scheduled_callbacks.clear()
+
+    window.initialize_startup()
+
+    assert startup.initialize_count == 1
+    assert settings.check_requests == []
+    assert pc_check.run_count == 0
+    assert network.adapters == []
+    assert scheduled_callbacks == []
+
+
+def test_main_window_first_action_center_selection_loads_status_once(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduled_callbacks: list[object] = []
+    monkeypatch.setattr(
+        main_window_module.QTimer,
+        "singleShot",
+        lambda _msec, callback: scheduled_callbacks.append(callback),
+    )
+
+    pc_info = _FakePcInfo()
+    settings = _FakeSettings()
+    pc_check = _FakePcCheck()
+    window = MainWindow(
+        pc_info,
+        settings,
+        NetworkViewModel(_FakeListNetworkAdapters(), _FakeApplyStaticIp(), _FakeSetDhcp(), reload_sleep=lambda _: None),
+        pc_check,
+        _FakeActivation(),
+        _FakeAgentReport(),
+        _FakeStartupCoordinator(),
+    )
+    scheduled_callbacks.clear()
+
+    window._select_page(1)
+
+    assert len(scheduled_callbacks) == 1
+    scheduled_callbacks.pop(0)()
+    assert len(settings.check_requests) == 1
+    assert pc_check.run_count == 1
+
+    window._select_page(0)
+    window._select_page(1)
+    assert scheduled_callbacks == []
+    assert len(settings.check_requests) == 1
+    assert pc_check.run_count == 1
+
+    window.action_center_panel.refresh_status_button.click()
+    assert len(settings.check_requests) == 2
+    assert pc_check.run_count == 2
+
+
+def test_main_window_first_network_selection_loads_adapters_once(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduled_callbacks: list[object] = []
+    monkeypatch.setattr(
+        main_window_module.QTimer,
+        "singleShot",
+        lambda _msec, callback: scheduled_callbacks.append(callback),
+    )
+
+    adapter_reader = _FakeListNetworkAdapters()
+    network = NetworkViewModel(adapter_reader, _FakeApplyStaticIp(), _FakeSetDhcp(), reload_sleep=lambda _: None)
+    window = MainWindow(
+        _FakePcInfo(),
+        _FakeSettings(),
+        network,
+        _FakePcCheck(),
+        _FakeActivation(),
+        _FakeAgentReport(),
+        _FakeStartupCoordinator(),
+    )
+    scheduled_callbacks.clear()
+
+    window._select_page(2)
+
+    assert len(scheduled_callbacks) == 1
+    scheduled_callbacks.pop(0)()
+    assert adapter_reader.execute_count == 1
+    assert len(network.adapters) == 2
+
+    window._select_page(0)
+    window._select_page(2)
+    assert scheduled_callbacks == []
+    assert adapter_reader.execute_count == 1
+
+    window.network_panel.refresh_button.click()
+    assert adapter_reader.execute_count == 2
+
+
 def test_pc_info_panel_has_single_pc_name_action_button(qt_app: QApplication) -> None:
     panel = PcInfoPanel(_FakePcInfo())
 
@@ -283,6 +405,7 @@ def test_pc_info_panel_opens_windows_settings_without_input_dialog(
     panel._rename_pc()
 
     assert view_model.open_pc_name_settings_calls == 1
+    assert view_model.refresh_count == 0
     assert information_messages == []
     assert warning_messages == []
     assert panel.status_label.text() == "Windows 설정을 열었습니다."
@@ -317,6 +440,7 @@ def test_pc_info_panel_shows_warning_when_windows_settings_open_fails(
     panel._rename_pc()
 
     assert view_model.open_pc_name_settings_calls == 1
+    assert view_model.refresh_count == 0
     assert information_messages == []
     assert warning_messages == [("PC 이름 변경 실패", "Windows 설정을 열 수 없습니다.")]
 
@@ -691,7 +815,9 @@ def test_action_center_program_launch_success_does_not_show_popup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     launcher = _FakeLaunchProgram(ApplyResult(name="Chrome 실행", success=True, status="launched", message="Chrome을 실행했습니다."))
-    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=launcher)
+    settings = _FakeSettings()
+    pc_check = _FakePcCheck()
+    panel = ActionCenterPanel(settings, pc_check, _FakeActivation(), launch_program_use_case=launcher)
     information_messages: list[tuple[str, str]] = []
     warning_messages: list[tuple[str, str]] = []
 
@@ -709,6 +835,8 @@ def test_action_center_program_launch_success_does_not_show_popup(
     panel._launch_program("chrome")
 
     assert launcher.requests == ["chrome"]
+    assert settings.check_requests == []
+    assert pc_check.run_count == 0
     assert information_messages == []
     assert warning_messages == []
 
@@ -718,7 +846,9 @@ def test_action_center_program_launch_failure_shows_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     launcher = _FakeLaunchProgram(ApplyResult(name="Chrome 실행", success=False, status="failed", message="Chrome을 찾을 수 없습니다."))
-    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=launcher)
+    settings = _FakeSettings()
+    pc_check = _FakePcCheck()
+    panel = ActionCenterPanel(settings, pc_check, _FakeActivation(), launch_program_use_case=launcher)
     information_messages: list[tuple[str, str]] = []
     warning_messages: list[tuple[str, str]] = []
 
@@ -736,6 +866,8 @@ def test_action_center_program_launch_failure_shows_warning(
     panel._launch_program("chrome")
 
     assert launcher.requests == ["chrome"]
+    assert settings.check_requests == []
+    assert pc_check.run_count == 0
     assert information_messages == []
     assert warning_messages == [("실행 실패", "Chrome을 찾을 수 없습니다.")]
 
@@ -837,6 +969,7 @@ class _FakePcInfo:
         self.secure_boot_status_text = "사용"
         self.boot_mode = "UEFI"
         self.disks: list[tuple[str, str, str, str]] = []
+        self.refresh_count = 0
         self.open_pc_name_settings_calls = 0
         self.open_pc_name_settings_result = ApplyResult(
             name="PC 이름 변경",
@@ -846,6 +979,7 @@ class _FakePcInfo:
         )
 
     def refresh(self) -> None:
+        self.refresh_count += 1
         self.status_message = "PC 정보를 불러왔습니다."
 
     def open_pc_name_settings(self) -> ApplyResult:
@@ -899,6 +1033,32 @@ class _FakeActivation:
         self.status_message = ""
 
 
+class _FakeAgentReport:
+    status_message = "전송 대기"
+    last_result_message = ""
+    last_sent_at = "-"
+    last_report_id = "-"
+    last_match_status = "-"
+    worker_token_status = "확인 안 됨"
+    max_retry_count = 1
+    retry_delay_seconds = 0
+
+    def refresh_worker_token_status(self) -> None:
+        self.worker_token_status = "확인 안 됨"
+
+    def send_report(self) -> None:
+        self.status_message = "서버 전송이 완료되었습니다."
+
+
+class _FakeStartupCoordinator:
+    def __init__(self) -> None:
+        self.initialize_count = 0
+
+    def initialize(self) -> StartupResult:
+        self.initialize_count += 1
+        return StartupResult(is_admin=True)
+
+
 class _RecordingActivation(_FakeActivation):
     def __init__(self) -> None:
         super().__init__()
@@ -915,7 +1075,11 @@ class _RecordingActivation(_FakeActivation):
 
 
 class _FakeListNetworkAdapters:
+    def __init__(self) -> None:
+        self.execute_count = 0
+
     def execute(self) -> list[NetworkAdapterInfo]:
+        self.execute_count += 1
         return [
             NetworkAdapterInfo(
                 name="이더넷",

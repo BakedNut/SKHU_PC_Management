@@ -111,6 +111,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.action_center_panel)
         self.stack.addWidget(self.network_panel)
         self.stack.addWidget(self.agent_report_panel)
+        self._action_center_loaded_once = False
+        self._network_loaded_once = False
 
         self.nav_buttons = [
             nav_button("PC 정보"),
@@ -219,6 +221,12 @@ class MainWindow(QMainWindow):
 
         for button_index, button in enumerate(self.nav_buttons):
             set_selected(button, button_index == index)
+        if index == 1 and not self._action_center_loaded_once:
+            self._action_center_loaded_once = True
+            QTimer.singleShot(0, self._load_action_center_on_first_show)
+        elif index == 2 and not self._network_loaded_once:
+            self._network_loaded_once = True
+            QTimer.singleShot(0, self._load_network_on_first_show)
 
     def initialize_startup(self) -> None:
         if not self._busy_coordinator.try_begin("초기 정보를 불러오는 중..."):
@@ -260,10 +268,18 @@ class MainWindow(QMainWindow):
             self._busy_coordinator.end(
                 locals().get("final_message", "초기화가 완료되었습니다.")
             )
-            QTimer.singleShot(0, self.network_panel._load_adapters)
 
             if self._auto_send_on_startup:
                 QTimer.singleShot(500, self._auto_send_agent_report)
+
+    def _load_action_center_on_first_show(self) -> None:
+        self.action_center_panel.set_detected_windows_text(
+            self._pc_info_view_model.windows_version
+        )
+        self.action_center_panel.load_initial_status()
+
+    def _load_network_on_first_show(self) -> None:
+        self.network_panel.load_adapters()
 
     def _auto_send_agent_report(self) -> None:
         if self._busy_coordinator.is_busy:

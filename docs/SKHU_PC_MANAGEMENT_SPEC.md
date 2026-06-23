@@ -20,11 +20,14 @@ SKHU PC Management는 성공회대학교 강의실 Windows PC의 정보 조회, 
 
 ## 화면
 
+앱 시작 시에는 관리자 권한 확인과 PC 기본 정보 조회만 자동 실행한다. 설정 상태 확인/PC 점검은 작업 센터 탭 첫 진입 시, 네트워크 어댑터 조회는 네트워크 탭 첫 진입 시 각각 자동으로 1회 실행한다. 이후 같은 탭 재진입에서는 자동 재조회하지 않고, 사용자가 각 화면의 새로고침 버튼을 눌렀을 때 다시 실행한다.
+
 ### PC 정보
 
 - PC 이름, 사용자, Windows 버전, CPU, RAM, GPU, 디스크, 네트워크, TPM, Secure Boot, Boot Mode 표시.
 - `PC 이름 변경` 버튼은 Windows 설정 `ms-settings:about` 화면을 연다.
 - 앱 UI는 새 이름을 직접 입력받지 않고 `Rename-Computer`를 직접 호출하지 않는다.
+- `PC 이름 변경` 버튼은 Windows 설정 화면만 열며 PC 정보 전체 refresh를 자동 실행하지 않는다.
 
 ### 작업 센터
 
@@ -35,6 +38,9 @@ SKHU PC Management는 성공회대학교 강의실 Windows PC의 정보 조회, 
 - PC 점검 결과 표: Office 설치 확인 행은 숨기고, Office 감지 결과는 인증 카드 내부 Office row에 표시.
 - 즉시 실행 도구: 휴지통, Chrome/Edge User Data 초기화, Chrome/Edge/PotPlayer/Bandizip 실행.
 - Chrome/Edge/PotPlayer/Bandizip 실행과 PC 이름 변경 화면 열기는 성공 시 완료 팝업을 표시하지 않고, 실패 시에만 경고 팝업을 표시한다.
+- Chrome/Edge/PotPlayer/Bandizip 실행은 실행 후 설정 상태 확인이나 PC 점검 전체 재조회를 수행하지 않는다.
+- 작업 센터 탭 첫 진입 시 설정 상태 확인과 PC 점검을 자동으로 1회 실행한다.
+- `상태 새로고침`은 설정 상태 확인과 PC 점검을 함께 실행한다.
 - 강의실 PC 작업: 전원 옵션 `안 함`, 23시 자동종료 등록.
 
 ### 네트워크
@@ -43,6 +49,7 @@ SKHU PC Management는 성공회대학교 강의실 Windows PC의 정보 조회, 
 - 현재 네트워크 상태 표 표시.
 - 고정 IP 적용, DHCP 전환.
 - 적용 후 어댑터 목록을 다시 조회하고 같은 어댑터를 재선택한다.
+- 앱 시작 시 자동 조회하지 않고, 네트워크 탭 첫 진입 시 자동으로 1회 조회한다. 이후에는 `어댑터 새로고침` 버튼을 눌렀을 때 다시 조회한다.
 
 ## 시스템 설정 항목
 
