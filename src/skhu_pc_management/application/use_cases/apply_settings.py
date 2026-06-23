@@ -112,7 +112,7 @@ class ApplySettings:
                     status="failed",
                     message="작업표시줄 설정 적용 기능이 구성되지 않았습니다.",
                 )
-            result = self.apply_taskbar_layout_use_case.execute(dry_run=True)
+            result = self.apply_taskbar_layout_use_case.execute(dry_run=False)
             return ApplyResult(
                 setting_id=definition.setting_id,
                 name=definition.name,
@@ -165,19 +165,11 @@ class ApplySettings:
             self._run_post_command(STOP_EXPLORER_COMMAND, post_command_failures)
             self._run_post_command(START_EXPLORER_COMMAND, post_command_failures)
 
-        if not post_command_failures:
-            return
-
-        message = "Post command failed: " + "; ".join(post_command_failures)
-        for index, result in enumerate(results):
-            if result.success:
-                results[index] = ApplyResult(
-                    setting_id=result.setting_id,
-                    name=result.name,
-                    success=False,
-                    status="failed",
-                    message=message,
-                )
+        # Post commands only refresh Shell/UI state. Registry and file status
+        # providers determine whether settings are actually configured, so
+        # best-effort post command failures are intentionally not surfaced in
+        # per-setting results.
+        return
 
     def _run_post_command(self, command: tuple[str, ...], failures: list[str]) -> None:
         try:

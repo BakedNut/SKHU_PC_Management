@@ -35,6 +35,14 @@ class FakeCommandRunner:
         return ""
 
 
+class FailingExplorerCommandRunner(FakeCommandRunner):
+    def run(self, command: Sequence[str]) -> str:
+        self.commands.append(tuple(command))
+        if tuple(command) == START_EXPLORER_COMMAND:
+            raise RuntimeError("Command failed with exit code 2")
+        return ""
+
+
 class FakeTaskbarLayoutUseCase:
     def __init__(self) -> None:
         self.dry_run_requests: list[bool] = []
@@ -43,9 +51,14 @@ class FakeTaskbarLayoutUseCase:
         from skhu_pc_management.domain.resources.models import TaskbarApplyResult
 
         self.dry_run_requests.append(dry_run)
+        message = (
+            "작업표시줄 설정 dry-run이 완료되었습니다. 실제 변경은 수행하지 않았습니다."
+            if dry_run
+            else "작업표시줄 설정을 적용했습니다."
+        )
         return TaskbarApplyResult(
             success=True,
-            message="작업표시줄 설정 dry-run이 완료되었습니다. 실제 변경은 수행하지 않았습니다.",
+            message=message,
             dry_run=dry_run,
         )
 
@@ -132,6 +145,23 @@ def test_explorer_restart_runs_through_command_runner_when_required() -> None:
     assert START_EXPLORER_COMMAND in command_runner.commands
 
 
+def test_post_command_failure_is_reported_as_warning_without_flipping_apply_result() -> None:
+    command_runner = FailingExplorerCommandRunner()
+    use_case = ApplySettings(FakeRegistry(), command_runner)
+
+    result = use_case.execute(["hide_task_view_button"])
+
+    assert result.results[0].success is True
+    assert result.results[0].status == "applied"
+    assert result.results[0].message == "Applied."
+    assert "explorer.exe" not in result.results[0].message
+    assert "Command failed" not in result.results[0].message
+    assert "Post command failed" not in result.results[0].message
+    assert "후처리 경고" not in result.results[0].message
+    assert STOP_EXPLORER_COMMAND in command_runner.commands
+    assert START_EXPLORER_COMMAND in command_runner.commands
+
+
 def test_disable_password_expiration_without_system_settings_actions_fails_without_fallback_command() -> None:
     command_runner = FakeCommandRunner()
     use_case = ApplySettings(FakeRegistry(), command_runner)
@@ -174,7 +204,7 @@ def test_unknown_setting_id_returns_failure_result() -> None:
     assert command_runner.commands == []
 
 
-def test_taskbar_setting_uses_dry_run_only() -> None:
+def test_taskbar_setting_runs_real_apply() -> None:
     taskbar_use_case = FakeTaskbarLayoutUseCase()
     registry = FakeRegistry()
     command_runner = FakeCommandRunner()
@@ -187,8 +217,8 @@ def test_taskbar_setting_uses_dry_run_only() -> None:
     result = use_case.execute(["set_taskbar_icons"])
 
     assert result.is_success is True
-    assert taskbar_use_case.dry_run_requests == [True]
-    assert "dry-run" in result.results[0].message
-    assert "실제 변경" in result.results[0].message
+    assert taskbar_use_case.dry_run_requests == [False]
+    assert result.results[0].status == "applied"
+    assert result.results[0].message == "작업표시줄 설정을 적용했습니다."
     assert registry.writes == []
     assert command_runner.commands == []

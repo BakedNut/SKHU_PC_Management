@@ -56,12 +56,13 @@ class FakeCheckSettingsStatus:
         self.requests.append(setting_ids)
         return [
             SettingStatus(
-                setting_id=setting_ids[0],
-                label="설정",
+                setting_id=setting_id,
+                label=f"설정 {setting_id}",
                 status_text="configured",
                 actual_value=0,
                 is_configured=True,
             )
+            for setting_id in setting_ids
         ]
 
 
@@ -72,7 +73,10 @@ class FakeApplySettings:
     def execute(self, setting_ids: list[str]) -> ApplySettingsResult:
         self.requests.append(setting_ids)
         return ApplySettingsResult(
-            [ApplyResult(setting_id=setting_ids[0], name="설정", success=True, status="applied", message="ok")]
+            [
+                ApplyResult(setting_id=setting_id, name=f"설정 {setting_id}", success=True, status="applied", message="ok")
+                for setting_id in setting_ids
+            ]
         )
 
 
@@ -106,6 +110,15 @@ class FakeActivation:
         return ActivationResult(True, self.action, "prepared", "process", True)
 
 
+class FakeOpenPcNameSettings:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def execute(self) -> ApplyResult:
+        self.calls += 1
+        return ApplyResult(name="PC 이름 변경", success=True, status="opened", message="Windows 설정을 열었습니다.")
+
+
 def test_pc_info_viewmodel_refresh_updates_rows() -> None:
     view_model = PcInfoViewModel(FakeLoadPcInfo())
 
@@ -124,6 +137,18 @@ def test_pc_info_viewmodel_refresh_updates_rows() -> None:
     assert ("IPv4 주소", "192.168.0.10") in view_model.rows
 
 
+def test_pc_info_viewmodel_opens_pc_name_settings() -> None:
+    open_settings = FakeOpenPcNameSettings()
+    view_model = PcInfoViewModel(FakeLoadPcInfo(), open_settings)
+
+    result = view_model.open_pc_name_settings()
+
+    assert result is not None
+    assert result.success is True
+    assert open_settings.calls == 1
+    assert view_model.status_message == "Windows 설정을 열었습니다."
+
+
 def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
     check_status = FakeCheckSettingsStatus()
     apply_settings = FakeApplySettings()
@@ -132,22 +157,43 @@ def test_settings_viewmodel_updates_status_and_apply_rows() -> None:
     assert view_model.summary_text == "상태 확인 필요"
 
     view_model.check_status(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "-", "설정됨", "0")]
+    assert view_model.result_rows == [("설정 hide_frequent_folders", "설정됨", "0")]
     assert view_model.summary_text == "모든 항목 정상"
     assert check_status.requests == [["hide_frequent_folders"]]
 
-    view_model.apply_selected(["hide_frequent_folders"])
-    assert view_model.result_rows == [("설정", "적용됨", "설정됨", "ok / 0")]
+    view_model.apply_selected(["hide_frequent_folders"], display_setting_ids=["hide_frequent_folders"])
+    assert view_model.result_rows == [("설정 hide_frequent_folders", "설정됨", "0")]
     assert apply_settings.requests == [["hide_frequent_folders"]]
     assert check_status.requests == [["hide_frequent_folders"], ["hide_frequent_folders"]]
+
+
+def test_settings_viewmodel_apply_selected_rechecks_display_setting_ids() -> None:
+    check_status = FakeCheckSettingsStatus()
+    apply_settings = FakeApplySettings()
+    view_model = SettingsViewModel(check_status, apply_settings)
+
+    view_model.apply_selected(
+        ["show_file_extensions"],
+        display_setting_ids=["show_file_extensions", "hide_task_view_button"],
+    )
+
+    assert apply_settings.requests == [["show_file_extensions"]]
+    assert check_status.requests == [["show_file_extensions", "hide_task_view_button"]]
+    assert view_model.result_rows == [
+        ("설정 show_file_extensions", "설정됨", "0"),
+        ("설정 hide_task_view_button", "설정됨", "0"),
+    ]
+    assert all(len(row) == 3 for row in view_model.result_rows)
+    assert all("ok" not in row[2] for row in view_model.result_rows)
+    assert all("Applied." not in row[2] for row in view_model.result_rows)
 
 
 def test_settings_viewmodel_summary_counts_attention_rows() -> None:
     view_model = SettingsViewModel(FakeCheckSettingsStatus(), FakeApplySettings())
     view_model.result_rows = [
-        ("정상 설정", "-", "설정됨", ""),
-        ("미설정 설정", "-", "미설정", "실제값 1"),
-        ("확인 불가 설정", "-", "확인 불가", "권한 부족"),
+        ("정상 설정", "설정됨", ""),
+        ("미설정 설정", "미설정", "실제값 1"),
+        ("확인 불가 설정", "확인 불가", "권한 부족"),
     ]
 
     assert view_model.warning_count == 2

@@ -379,6 +379,66 @@ QPushButton#activationActionButton {
     min-width: 190px;
     max-width: 240px;
 }
+QPushButton#pcActionPrimaryButton {
+    background: #EFF6FF;
+    border: 1px solid #93C5FD;
+    border-radius: 8px;
+    color: #1D4ED8;
+    font-weight: 700;
+    padding: 14px 18px;
+    min-height: 54px;
+    text-align: center;
+}
+QPushButton#pcActionPrimaryButton:hover {
+    background: #DBEAFE;
+    border-color: #60A5FA;
+}
+QPushButton#pcActionPrimaryButton:pressed {
+    background: #BFDBFE;
+    border-color: #3B82F6;
+}
+QPushButton#pcActionPrimaryButton:disabled {
+    background: #F8FAFC;
+    border-color: #CBD5E1;
+    color: #94A3B8;
+}
+QMessageBox {
+    background-color: #FFFFFF;
+    color: #111827;
+}
+QMessageBox QLabel {
+    background-color: transparent;
+    color: #111827;
+}
+QMessageBox QTextEdit {
+    background-color: #FFFFFF;
+    color: #111827;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+}
+QMessageBox QPushButton {
+    background-color: #2563EB;
+    border: 1px solid #1D4ED8;
+    border-radius: 6px;
+    color: #FFFFFF;
+    font-weight: 600;
+    padding: 7px 16px;
+    min-width: 72px;
+    min-height: 30px;
+}
+QMessageBox QPushButton:hover {
+    background-color: #1D4ED8;
+    border-color: #1E40AF;
+}
+QMessageBox QPushButton:pressed {
+    background-color: #1E40AF;
+    border-color: #1E3A8A;
+}
+QMessageBox QPushButton:disabled {
+    background-color: #E5E7EB;
+    border-color: #CBD5E1;
+    color: #94A3B8;
+}
 QLineEdit, QTextEdit, QComboBox {
     background: #FFFFFF;
     border: 1px solid #D1D5DB;

@@ -8,7 +8,7 @@ from typing import Any
 @dataclass
 class PcInfoViewModel:
     load_pc_info_use_case: Any
-    rename_pc_use_case: Any | None = None
+    open_pc_name_settings_use_case: Any | None = None
     status_message: str = "PC 정보를 불러오지 않았습니다."
     rows: list[tuple[str, str]] = field(default_factory=list)
     pc_name: str = "알 수 없음"
@@ -89,17 +89,13 @@ class PcInfoViewModel:
         finally:
             self.is_busy = False
 
-    def rename_pc(self, new_name: str) -> Any:
-        if self.rename_pc_use_case is None:
-            self.status_message = "PC 이름 변경 기능이 구성되지 않았습니다."
+    def open_pc_name_settings(self) -> Any:
+        if self.open_pc_name_settings_use_case is None:
+            self.status_message = "PC 이름 변경 화면 열기 기능이 구성되지 않았습니다."
             return None
-        result = self.rename_pc_use_case.execute(new_name)
+        result = self.open_pc_name_settings_use_case.execute()
         self.status_message = result.message
         return result
-
-    def auto_rename_pc(self) -> Any:
-        target_name = self.user_name.replace(" ", "-")
-        return self.rename_pc(target_name)
 
 
 def _join_non_empty(*values: object | None) -> str:

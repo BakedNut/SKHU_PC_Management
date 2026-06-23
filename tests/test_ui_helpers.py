@@ -9,9 +9,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QTableWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QMessageBox, QPushButton, QTableWidget
 
+from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
+from skhu_pc_management.domain.settings.models import ApplyResult
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
+from skhu_pc_management.presentation.qt.panels.pc_info_panel import PcInfoPanel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.widgets.badges import StatusBadge, badge_tone_from_status
 from skhu_pc_management.presentation.qt.widgets.buttons import info_button, primary_button, warning_button
@@ -147,7 +150,8 @@ def test_app_qss_contains_win11_setting_badge_and_disabled_section_styles() -> N
     assert 'QFrame#settingsSection[state="active"]' in APP_QSS
     assert 'QFrame#settingsSection[state="disabled"]' in APP_QSS
     assert "QLabel#sectionDisabledHint" in APP_QSS
-    assert "border: 1px solid transparent;" not in APP_QSS
+    assert 'QFrame#settingsSection[state="disabled"] QLabel#settingBadge[tone="info"]' in APP_QSS
+    assert 'QFrame#settingsSection[state="disabled"] QLabel#cardTitle' in APP_QSS
     assert APP_QSS.count("border: 1px solid #E5E7EB;") >= 3
     assert "Windows 11 선택 시 사용할 수 있습니다." not in APP_QSS
 
@@ -169,6 +173,28 @@ def test_app_qss_contains_info_button_role() -> None:
     assert "background: #EFF6FF;" in APP_QSS
     assert "border: 1px solid #93C5FD;" in APP_QSS
     assert "color: #1D4ED8;" in APP_QSS
+
+
+def test_app_qss_contains_pc_action_primary_button_styles() -> None:
+    assert "QPushButton#pcActionPrimaryButton" in APP_QSS
+    assert "QPushButton#pcActionPrimaryButton:hover" in APP_QSS
+    assert "QPushButton#pcActionPrimaryButton:pressed" in APP_QSS
+    assert "QPushButton#pcActionPrimaryButton:disabled" in APP_QSS
+    assert "min-height: 54px;" in APP_QSS
+
+
+def test_app_qss_forces_message_box_light_theme() -> None:
+    assert "QMessageBox {" in APP_QSS
+    assert "QMessageBox QLabel" in APP_QSS
+    assert "QMessageBox QTextEdit" in APP_QSS
+    assert "QMessageBox QPushButton" in APP_QSS
+    assert "QMessageBox QPushButton:hover" in APP_QSS
+    assert "QMessageBox QPushButton:pressed" in APP_QSS
+    assert "QMessageBox QPushButton:disabled" in APP_QSS
+    assert "background-color: #FFFFFF;" in APP_QSS
+    assert "color: #111827;" in APP_QSS
+    assert "background-color: #2563EB;" in APP_QSS
+    assert "color: #FFFFFF;" in APP_QSS
 
 
 def test_combo_with_arrow_wraps_combobox_with_visible_indicator(qt_app: QApplication) -> None:
@@ -213,7 +239,7 @@ def test_network_panel_hides_successful_adapter_load_message_and_removes_duplica
     assert panel.status_label.isHidden() is True
     label_texts = [label.text() for label in panel.findChildren(QLabel)]
     assert "할당 방식" not in label_texts
-    assert label_texts.count("IP 할당 방식") == 1
+    assert "IP 할당 방식" not in label_texts
     assert panel.current_table.minimumHeight() == 238
     assert panel.current_table.maximumHeight() == 238
     table_rows = [
@@ -223,6 +249,83 @@ def test_network_panel_hides_successful_adapter_load_message_and_removes_duplica
     assert ("네트워크 어댑터", "이더넷") in table_rows
     assert ("IP 할당 방식", "수동 IP") in table_rows
     assert ("IP 주소", "192.168.0.10") in table_rows
+
+
+def test_pc_info_panel_has_single_pc_name_action_button(qt_app: QApplication) -> None:
+    panel = PcInfoPanel(_FakePcInfo())
+
+    assert panel.rename_button.text() == "PC 이름 변경"
+    assert panel.rename_button.objectName() == "pcActionPrimaryButton"
+    assert panel.rename_button.minimumHeight() == 54
+    assert not hasattr(panel, "auto_rename_button")
+
+
+def test_pc_info_panel_opens_windows_settings_without_input_dialog(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view_model = _FakePcInfo()
+    panel = PcInfoPanel(view_model)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._rename_pc()
+
+    assert view_model.open_pc_name_settings_calls == 1
+    assert information_messages == []
+    assert warning_messages == []
+    assert panel.status_label.text() == "Windows 설정을 열었습니다."
+
+
+def test_pc_info_panel_shows_warning_when_windows_settings_open_fails(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view_model = _FakePcInfo()
+    view_model.open_pc_name_settings_result = ApplyResult(
+        name="PC 이름 변경",
+        success=False,
+        status="failed",
+        message="Windows 설정을 열 수 없습니다.",
+    )
+    panel = PcInfoPanel(view_model)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._rename_pc()
+
+    assert view_model.open_pc_name_settings_calls == 1
+    assert information_messages == []
+    assert warning_messages == [("PC 이름 변경 실패", "Windows 설정을 열 수 없습니다.")]
+
+
+def test_pc_info_panel_disables_pc_name_button_in_test_mode(qt_app: QApplication) -> None:
+    panel = PcInfoPanel(_FakePcInfo(), test_mode=True)
+
+    assert panel.rename_button.isEnabled() is False
+    assert TEST_MODE_DISABLED_MESSAGE in panel.rename_button.toolTip()
 
 
 def test_classroom_summary_formatter_shortens_status_text() -> None:
@@ -296,7 +399,7 @@ def test_policy_action_row_compact_threshold() -> None:
     assert not _PolicyActionRow.should_use_compact_layout(620)
 
 
-def test_action_center_settings_table_renders_three_columns(qt_app: QApplication) -> None:
+def test_action_center_settings_table_renders_three_status_columns(qt_app: QApplication) -> None:
     panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation())
 
     assert not hasattr(panel, "recommended_action_label")
@@ -368,6 +471,38 @@ def test_action_center_win11_only_start_menu_section_tracks_windows_selection(qt
     assert panel.start_menu_section.property("state") == "active"
     assert panel.start_menu_unavailable_label.isHidden()
     assert all(not row.isHidden() for row in panel._win11_setting_rows)
+
+
+def test_action_center_visible_setting_ids_follow_windows_selection(qt_app: QApplication) -> None:
+    settings = _FakeSettings()
+    panel = ActionCenterPanel(settings, _FakePcCheck(), _FakeActivation())
+
+    assert panel.win10_radio.isChecked()
+    assert all(not setting_id.startswith("win11_") for setting_id in panel._visible_setting_ids())
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+
+    visible_ids = panel._visible_setting_ids()
+    assert "win11_start_more_pins" in visible_ids
+    assert "win11_hide_recent_apps" in visible_ids
+
+
+def test_action_center_refresh_and_apply_use_visible_setting_ids(qt_app: QApplication) -> None:
+    settings = _FakeSettings()
+    pc_check = _FakePcCheck()
+    panel = ActionCenterPanel(settings, pc_check, _FakeActivation())
+
+    panel._refresh_status()
+
+    assert settings.check_requests
+    assert all(not setting_id.startswith("win11_") for setting_id in settings.check_requests[-1])
+
+    panel.set_detected_windows_text("Windows 11 Pro")
+    panel._checkboxes["show_file_extensions"].setChecked(True)
+    panel._apply_settings()
+
+    assert settings.apply_requests[-1][0] == ["show_file_extensions"]
+    assert "win11_start_more_pins" in settings.apply_requests[-1][1]
 
     panel.win10_radio.setChecked(True)
 
@@ -551,6 +686,85 @@ def test_action_center_activation_buttons_use_current_radio_selection(qt_app: QA
     assert activation.office_requests[-1] == "2024"
 
 
+def test_action_center_program_launch_success_does_not_show_popup(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _FakeLaunchProgram(ApplyResult(name="Chrome 실행", success=True, status="launched", message="Chrome을 실행했습니다."))
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=launcher)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._launch_program("chrome")
+
+    assert launcher.requests == ["chrome"]
+    assert information_messages == []
+    assert warning_messages == []
+
+
+def test_action_center_program_launch_failure_shows_warning(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _FakeLaunchProgram(ApplyResult(name="Chrome 실행", success=False, status="failed", message="Chrome을 찾을 수 없습니다."))
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=launcher)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._launch_program("chrome")
+
+    assert launcher.requests == ["chrome"]
+    assert information_messages == []
+    assert warning_messages == [("실행 실패", "Chrome을 찾을 수 없습니다.")]
+
+
+def test_action_center_program_launch_unconfigured_still_shows_information(
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation(), launch_program_use_case=None)
+    information_messages: list[tuple[str, str]] = []
+    warning_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, message: information_messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warning_messages.append((title, message)),
+    )
+
+    panel._launch_program("chrome")
+
+    assert information_messages == [("미구성", "프로그램 실행 기능이 구성되지 않았습니다.")]
+    assert warning_messages == []
+
+
 def test_action_center_summary_treats_cannot_confirm_messages_as_unknown() -> None:
     assert _short_shutdown_status("자동종료 스케줄 상태를 확인할 수 없습니다.") == (
         "확인 불가",
@@ -568,8 +782,29 @@ def test_app_qss_does_not_keep_unused_tab_widget_styles() -> None:
 
 
 class _FakeSettings:
-    result_rows = [("파일 확장자 표시", "적용됨", "설정됨", "적용 완료")]
-    status_message = ""
+    def __init__(self) -> None:
+        self.result_rows = [("파일 확장자 표시", "설정됨", "적용 완료")]
+        self.status_message = ""
+        self.check_requests: list[list[str]] = []
+        self.apply_requests: list[tuple[list[str], list[str] | None]] = []
+
+    def all_setting_ids(self) -> list[str]:
+        return [
+            "show_file_extensions",
+            "hide_task_view_button",
+            "win11_start_more_pins",
+            "win11_hide_recent_apps",
+        ]
+
+    def check_status(self, setting_ids: list[str]) -> None:
+        self.check_requests.append(list(setting_ids))
+        self.result_rows = [(setting_id, "설정됨", "상태 확인") for setting_id in setting_ids]
+
+    def apply_selected(self, setting_ids: list[str], display_setting_ids: list[str] | None = None) -> None:
+        self.apply_requests.append((list(setting_ids), None if display_setting_ids is None else list(display_setting_ids)))
+        display_ids = display_setting_ids or setting_ids
+        self.result_rows = [(setting_id, "설정됨", "상태 확인") for setting_id in display_ids]
+        self.status_message = "설정 적용 완료"
 
     @property
     def warning_count(self) -> int:
@@ -580,11 +815,65 @@ class _FakeSettings:
         return "모든 항목 정상"
 
 
+class _FakePcInfo:
+    def __init__(self) -> None:
+        self.status_message = "대기 중"
+        self.pc_name = "PC01"
+        self.user_name = "student"
+        self.windows_version = "Windows 11"
+        self.windows_version_detail = "26100.1 (64비트)"
+        self.cpu = "CPU"
+        self.ram = "16GB"
+        self.gpu = "GPU"
+        self.gpu_memory = "8GB"
+        self.ipv4_address = "192.168.0.10"
+        self.mac_address = "AA-BB-CC-DD-EE-FF"
+        self.disk_nvme_summary = "1개"
+        self.disk_ssd_summary = "없음"
+        self.disk_hdd_summary = "없음"
+        self.disk_unknown_summary = "없음"
+        self.tpm_version = "2.0"
+        self.tpm_status_text = "설치됨"
+        self.secure_boot_status_text = "사용"
+        self.boot_mode = "UEFI"
+        self.disks: list[tuple[str, str, str, str]] = []
+        self.open_pc_name_settings_calls = 0
+        self.open_pc_name_settings_result = ApplyResult(
+            name="PC 이름 변경",
+            success=True,
+            status="opened",
+            message="Windows 설정을 열었습니다.",
+        )
+
+    def refresh(self) -> None:
+        self.status_message = "PC 정보를 불러왔습니다."
+
+    def open_pc_name_settings(self) -> ApplyResult:
+        self.open_pc_name_settings_calls += 1
+        self.status_message = self.open_pc_name_settings_result.message
+        return self.open_pc_name_settings_result
+
+
+class _FakeLaunchProgram:
+    def __init__(self, result: ApplyResult) -> None:
+        self.result = result
+        self.requests: list[str] = []
+
+    def execute(self, program_id: str) -> ApplyResult:
+        self.requests.append(program_id)
+        return self.result
+
+
 class _FakePcCheck:
-    result_rows = [("전원", "정상", "문제 없음")]
-    installed_office_status_text = "현재 감지: Office 2024"
-    power_option_status_text = "전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함, 절전: 안 함, 최대 절전: 안 함"
-    auto_shutdown_status_text = "23시 자동종료 스케줄이 정상 등록되어 있습니다."
+    def __init__(self) -> None:
+        self.result_rows = [("전원", "정상", "문제 없음")]
+        self.installed_office_status_text = "현재 감지: Office 2024"
+        self.power_option_status_text = "전원 옵션이 올바르게 설정되어 있습니다. 화면 끄기: 안 함, 절전: 안 함, 최대 절전: 안 함"
+        self.auto_shutdown_status_text = "23시 자동종료 스케줄이 정상 등록되어 있습니다."
+        self.run_count = 0
+
+    def run_checks(self) -> None:
+        self.run_count += 1
 
     @property
     def error_count(self) -> int:

@@ -88,6 +88,41 @@ def test_taskbar_layout_status_provider_compares_source_and_target(monkeypatch, 
     resources = tmp_path / "resources"
     source = resources / "TaskBar"
     source.mkdir(parents=True)
+    (source / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData"
+    target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target.mkdir(parents=True)
+    (target / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources)).check("set_taskbar_icons")
+
+    assert status.is_configured is True
+    assert "실제 pin 상태" in status.detail
+
+
+def test_taskbar_layout_status_provider_expects_google_chrome_shortcut_name(monkeypatch, tmp_path) -> None:
+    resources = tmp_path / "resources"
+    source = resources / "TaskBar"
+    source.mkdir(parents=True)
+    (source / "Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData"
+    target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target.mkdir(parents=True)
+    (target / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources)).check("set_taskbar_icons")
+
+    assert status.is_configured is True
+    assert "누락=없음" in status.detail
+    assert "추가=없음" in status.detail
+
+
+def test_taskbar_layout_status_provider_warns_when_target_uses_legacy_chrome_name(monkeypatch, tmp_path) -> None:
+    resources = tmp_path / "resources"
+    source = resources / "TaskBar"
+    source.mkdir(parents=True)
     (source / "Chrome.lnk").write_text("shortcut", encoding="utf-8")
     appdata = tmp_path / "AppData"
     target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
@@ -97,14 +132,75 @@ def test_taskbar_layout_status_provider_compares_source_and_target(monkeypatch, 
 
     status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources)).check("set_taskbar_icons")
 
+    assert status.is_configured is False
+    assert "잘못된 Chrome 바로가기 이름: Chrome.lnk" in status.detail
+
+
+def test_taskbar_layout_status_provider_validates_google_chrome_target(monkeypatch, tmp_path) -> None:
+    resources = tmp_path / "resources"
+    source = resources / "TaskBar"
+    source.mkdir(parents=True)
+    (source / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData"
+    target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target.mkdir(parents=True)
+    (target / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    chrome_exe = tmp_path / "Chrome" / "chrome.exe"
+    chrome_exe.parent.mkdir(parents=True)
+    chrome_exe.write_text("chrome", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources), FakeCommandRunner(str(chrome_exe))).check(
+        "set_taskbar_icons"
+    )
+
     assert status.is_configured is True
-    assert "실제 pin 상태" in status.detail
+    assert status.status_text == "configured"
 
 
-def test_password_expiration_status_provider_reports_expiring_user() -> None:
+def test_taskbar_layout_status_provider_warns_when_google_chrome_target_is_missing(monkeypatch, tmp_path) -> None:
+    resources = tmp_path / "resources"
+    source = resources / "TaskBar"
+    source.mkdir(parents=True)
+    (source / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData"
+    target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target.mkdir(parents=True)
+    (target / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    status = TaskbarLayoutStatusProvider(
+        FakeResourceResolver(resources),
+        FakeCommandRunner(str(tmp_path / "missing" / "chrome.exe")),
+    ).check("set_taskbar_icons")
+
+    assert status.is_configured is False
+    assert "Google Chrome.lnk 대상 없음" in status.detail
+
+
+def test_taskbar_layout_status_provider_keeps_non_chrome_shortcut_names_exact(monkeypatch, tmp_path) -> None:
+    resources = tmp_path / "resources"
+    source = resources / "TaskBar"
+    source.mkdir(parents=True)
+    (source / "Explorer.lnk").write_text("shortcut", encoding="utf-8")
+    appdata = tmp_path / "AppData"
+    target = appdata / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    target.mkdir(parents=True)
+    (target / "Explorer Copy.lnk").write_text("shortcut", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources)).check("set_taskbar_icons")
+
+    assert status.is_configured is False
+    assert "Explorer.lnk" in status.detail
+    assert "Explorer Copy.lnk" in status.detail
+
+
+def test_password_expiration_status_provider_reports_general_remaining_user_as_detail_only() -> None:
     user_output = """
 [
-  {"Name": "student", "Enabled": true, "PasswordNeverExpires": false},
+  {"Name": "AS", "Enabled": true, "PasswordNeverExpires": false},
+  {"Name": "Teacher", "Enabled": true, "PasswordNeverExpires": true},
   {"Name": "disabled", "Enabled": false, "PasswordNeverExpires": false}
 ]
 """
@@ -112,10 +208,31 @@ def test_password_expiration_status_provider_reports_expiring_user() -> None:
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 
-    assert status.is_configured is False
-    assert status.status_text == "not_configured"
-    assert "student" in status.detail
+    assert status.is_configured is True
+    assert status.is_applied is True
+    assert status.severity == "ok"
+    assert status.status_text == "configured"
+    assert "개별 플래그 미반영 사용자: AS" in status.detail
     assert runner.commands[1] == ("net", "accounts")
+
+
+def test_password_expiration_status_provider_excludes_builtin_guest_from_failure() -> None:
+    user_output = """
+[
+  {"Name": "Teacher", "Enabled": true, "PasswordNeverExpires": true},
+  {"Name": "Guest", "Enabled": true, "PasswordNeverExpires": false}
+]
+"""
+    runner = FakeCommandRunner([user_output, "Maximum password age (days): Unlimited"])
+
+    status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
+
+    assert status.is_configured is True
+    assert status.is_applied is True
+    assert status.severity == "ok"
+    assert "최대 암호 사용 기간: 무제한" in status.detail
+    assert "개별 플래그 미반영 사용자: 없음" in status.detail
+    assert "제외된 내장 계정: Guest" in status.detail
 
 
 def test_password_expiration_status_provider_reports_configured_when_policy_and_users_match() -> None:
@@ -131,7 +248,7 @@ def test_password_expiration_status_provider_reports_configured_when_policy_and_
     assert status.is_configured is True
     assert status.status_text == "configured"
     assert "최대 암호 사용 기간: 무제한" in status.detail
-    assert "암호 만료 대상 사용자: 없음" in status.detail
+    assert "개별 플래그 미반영 사용자: 없음" in status.detail
 
 
 def test_password_expiration_status_provider_warns_when_max_password_age_is_numeric() -> None:

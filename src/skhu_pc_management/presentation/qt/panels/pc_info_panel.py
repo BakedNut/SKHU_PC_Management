@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QInputDialog,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
@@ -17,7 +16,7 @@ from PySide6.QtWidgets import (
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
 from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel
-from skhu_pc_management.presentation.qt.widgets.buttons import primary_button, secondary_button, set_button_role, warning_button
+from skhu_pc_management.presentation.qt.widgets.buttons import primary_button
 from skhu_pc_management.presentation.qt.widgets.forms import FormGrid, ReadOnlyField, StatusValueField
 from skhu_pc_management.presentation.qt.widgets.surfaces import Card, SummaryCard
 from skhu_pc_management.presentation.qt.widgets.tables import configure_table, set_column_widths, table_item
@@ -41,8 +40,9 @@ class PcInfoPanel(QWidget):
         self.status_label = QLabel(view_model.status_message)
         self.status_label.setObjectName("mutedText")
         self.refresh_button = primary_button("PC 정보 새로고침")
-        self.rename_button = secondary_button("PC 이름 변경")
-        self.auto_rename_button = warning_button("PC 이름 사용자 이름과 맞추기")
+        self.rename_button = QPushButton("PC 이름 변경")
+        self.rename_button.setObjectName("pcActionPrimaryButton")
+        self.rename_button.setMinimumHeight(54)
 
         self.summary_pc_name = SummaryCard("PC 이름", "알 수 없음")
         self.summary_windows = SummaryCard("Windows", "알 수 없음")
@@ -93,7 +93,7 @@ class PcInfoPanel(QWidget):
 
         self.refresh_button.clicked.connect(self._refresh)
         self.rename_button.clicked.connect(self._rename_pc)
-        self.auto_rename_button.clicked.connect(self._auto_rename_pc)
+        self.set_busy(False)
 
     def _page_header(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -156,9 +156,8 @@ class PcInfoPanel(QWidget):
         return card
 
     def _pc_actions_card(self) -> QWidget:
-        card = Card("PC 작업", "PC 이름 변경은 재부팅 후 적용됩니다.")
+        card = Card("PC 작업", "PC 이름 변경은 Windows 설정에서 진행합니다.")
         card.body_layout.addWidget(self.rename_button)
-        card.body_layout.addWidget(self.auto_rename_button)
         card.body_layout.addWidget(self.status_label)
         return card
 
@@ -212,25 +211,13 @@ class PcInfoPanel(QWidget):
         if self._test_mode:
             QMessageBox.information(self, "테스트 모드", TEST_MODE_DISABLED_MESSAGE)
             return
-        new_name, accepted = QInputDialog.getText(self, "PC 이름 변경", "새 PC 이름")
-        if not accepted:
-            return
-        result = self._view_model.rename_pc(new_name)
-        self._show_rename_result(result)
+        result = self._view_model.open_pc_name_settings()
+        self._show_pc_name_settings_result(result)
 
-    def _auto_rename_pc(self) -> None:
-        if self._test_mode:
-            QMessageBox.information(self, "테스트 모드", TEST_MODE_DISABLED_MESSAGE)
-            return
-        result = self._view_model.auto_rename_pc()
-        self._show_rename_result(result)
-
-    def _show_rename_result(self, result: object | None) -> None:
+    def _show_pc_name_settings_result(self, result: object | None) -> None:
         self._render()
         message = getattr(result, "message", self._view_model.status_message)
-        if getattr(result, "success", False):
-            QMessageBox.information(self, "재부팅 필요", f"{message}\n재부팅 후 적용됩니다.")
-        else:
+        if not getattr(result, "success", False):
             QMessageBox.warning(self, "PC 이름 변경 실패", message)
 
     def render(self) -> None:
@@ -239,10 +226,8 @@ class PcInfoPanel(QWidget):
     def set_busy(self, is_busy: bool) -> None:
         self.refresh_button.setEnabled(not is_busy)
         self.rename_button.setEnabled(not is_busy and not self._test_mode)
-        self.auto_rename_button.setEnabled(not is_busy and not self._test_mode)
         if self._test_mode:
-            for button in (self.rename_button, self.auto_rename_button):
-                button.setToolTip(TEST_MODE_DISABLED_MESSAGE)
+            self.rename_button.setToolTip(TEST_MODE_DISABLED_MESSAGE)
 
     def _render(self) -> None:
         self.status_label.setText(self._view_model.status_message)

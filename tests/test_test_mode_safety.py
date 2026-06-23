@@ -10,12 +10,14 @@ from skhu_pc_management.application.use_cases.apply_settings import ApplySetting
 from skhu_pc_management.application.use_cases.apply_static_ip import ApplyStaticIp
 from skhu_pc_management.application.use_cases.apply_taskbar_layout import ApplyTaskbarLayout
 from skhu_pc_management.application.use_cases.launch_program import LaunchProgram
+from skhu_pc_management.application.use_cases.open_pc_name_settings import OpenPcNameSettings
 from skhu_pc_management.application.use_cases.rename_pc import RenamePc
 from skhu_pc_management.application.use_cases.run_pc_maintenance import RunPcMaintenance
 from skhu_pc_management.application.use_cases.set_dhcp import SetDhcp
 from skhu_pc_management.application.use_cases.system_settings_actions import SystemSettingsActions
 from skhu_pc_management.domain.network.models import NetworkConfigResult, StaticIpConfig
 from skhu_pc_management.domain.resources.models import TaskbarApplyResult
+from skhu_pc_management.infrastructure.windows.windows_settings_launcher import WindowsSettingsAppLauncher
 
 
 class RecordingRegistry:
@@ -85,6 +87,15 @@ class RecordingProcessLauncher:
         self.launches.append((executable, tuple(args)))
 
 
+class RecordingOfficeLauncher:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def launch_excel(self) -> str:
+        self.calls += 1
+        return "excel.exe"
+
+
 class RecordingTaskbarConfigurator:
     def __init__(self) -> None:
         self.apply_requests: list[bool] = []
@@ -147,6 +158,14 @@ class RecordingSystemSettingsOperator:
         self.calls.append("disable_password_expiration_for_all_users")
 
 
+class RecordingWindowsSettingsLauncher:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def open_pc_name_settings(self) -> None:
+        self.calls += 1
+
+
 def test_test_mode_blocks_apply_settings_without_registry_or_commands() -> None:
     registry = RecordingRegistry()
     command_runner = RecordingCommandRunner()
@@ -180,10 +199,11 @@ def test_test_mode_blocks_activation_without_key_clipboard_or_process_calls() ->
     provider = RecordingProductKeyProvider()
     clipboard = RecordingClipboard()
     launcher = RecordingProcessLauncher()
+    office_launcher = RecordingOfficeLauncher()
     guard = SafetyGuard(test_mode=True)
 
     windows_result = ActivateWindows(provider, clipboard, launcher, safety_guard=guard).execute("windows_11")
-    office_result = ActivateOffice(provider, clipboard, launcher, safety_guard=guard).execute("2024")
+    office_result = ActivateOffice(provider, clipboard, office_launcher, safety_guard=guard).execute("2024")
 
     assert windows_result.success is False
     assert windows_result.message == TEST_MODE_DISABLED_MESSAGE
@@ -193,6 +213,7 @@ def test_test_mode_blocks_activation_without_key_clipboard_or_process_calls() ->
     assert provider.office_requests == []
     assert clipboard.texts == []
     assert launcher.launches == []
+    assert office_launcher.calls == 0
 
 
 def test_test_mode_allows_taskbar_dry_run_but_blocks_real_apply() -> None:
@@ -212,10 +233,12 @@ def test_test_mode_allows_taskbar_dry_run_but_blocks_real_apply() -> None:
 def test_test_mode_blocks_pc_rename_program_launch_and_maintenance_calls() -> None:
     guard = SafetyGuard(test_mode=True)
     renamer = RecordingPcRenamer()
+    settings_launcher = RecordingWindowsSettingsLauncher()
     launcher = RecordingProgramLauncher()
     maintenance = RecordingSystemMaintenance()
 
     rename_result = RenamePc(renamer, safety_guard=guard).execute("PC-101")
+    settings_result = OpenPcNameSettings(settings_launcher, safety_guard=guard).execute()
     launch_result = LaunchProgram(launcher, safety_guard=guard).execute("chrome")
     recycle_result = RunPcMaintenance(maintenance, safety_guard=guard).empty_recycle_bin()
     browser_result = RunPcMaintenance(maintenance, safety_guard=guard).delete_browser_history("chrome")
@@ -223,14 +246,25 @@ def test_test_mode_blocks_pc_rename_program_launch_and_maintenance_calls() -> No
     shutdown_result = RunPcMaintenance(maintenance, safety_guard=guard).set_auto_shutdown_at_23()
 
     assert rename_result.message == TEST_MODE_DISABLED_MESSAGE
+    assert settings_result.message == TEST_MODE_DISABLED_MESSAGE
     assert launch_result.message == TEST_MODE_DISABLED_MESSAGE
     assert recycle_result.message == TEST_MODE_DISABLED_MESSAGE
     assert browser_result.message == TEST_MODE_DISABLED_MESSAGE
     assert power_result.message == TEST_MODE_DISABLED_MESSAGE
     assert shutdown_result.message == TEST_MODE_DISABLED_MESSAGE
     assert renamer.names == []
+    assert settings_launcher.calls == 0
     assert launcher.program_ids == []
     assert maintenance.calls == []
+
+
+def test_open_pc_name_settings_launches_windows_settings_about_page() -> None:
+    process_launcher = RecordingProcessLauncher()
+    settings_launcher = WindowsSettingsAppLauncher(process_launcher)
+
+    settings_launcher.open_pc_name_settings()
+
+    assert process_launcher.launches == [(Path("cmd"), ("/c", "start", "", "ms-settings:about"))]
 
 
 def test_test_mode_blocks_special_system_settings_actions() -> None:

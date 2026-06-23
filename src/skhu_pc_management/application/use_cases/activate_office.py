@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from skhu_pc_management.application.safety import SafetyGuard
 from skhu_pc_management.domain.activation.models import ActivationResult
 from skhu_pc_management.ports.clipboard import Clipboard
-from skhu_pc_management.ports.process_launcher import ProcessLauncher
+from skhu_pc_management.ports.office_launcher import OfficeLauncher
 from skhu_pc_management.ports.product_key_provider import ProductKeyProvider
 
 
-DEFAULT_EXCEL_PATH = Path("excel.exe")
 CLIPBOARD_AFTER_FAILURE_NOTICE = "제품키는 이미 클립보드에 복사되었을 수 있습니다. 사용 후 다른 값을 복사해 클립보드를 덮어쓰세요."
 
 
@@ -18,8 +16,7 @@ CLIPBOARD_AFTER_FAILURE_NOTICE = "제품키는 이미 클립보드에 복사되�
 class ActivateOffice:
     product_key_provider: ProductKeyProvider
     clipboard: Clipboard
-    process_launcher: ProcessLauncher
-    excel_path: Path = DEFAULT_EXCEL_PATH
+    office_launcher: OfficeLauncher
     safety_guard: SafetyGuard = SafetyGuard()
 
     def execute(self, version: str | None = None) -> ActivationResult:
@@ -43,19 +40,17 @@ class ActivateOffice:
                 success=False,
                 action="office_activation",
                 message=f"Office 인증 준비 실패: {exc}",
-                launched_process=str(self.excel_path),
                 copied_to_clipboard=False,
                 error=str(exc),
             )
 
         try:
-            self.process_launcher.launch(self.excel_path)
+            launched_process = self.office_launcher.launch_excel()
         except FileNotFoundError as exc:
             return ActivationResult(
                 success=False,
                 action="office_activation",
                 message=f"Excel 실행 파일을 찾지 못했습니다. {CLIPBOARD_AFTER_FAILURE_NOTICE}",
-                launched_process=str(self.excel_path),
                 copied_to_clipboard=True,
                 error=str(exc),
             )
@@ -64,7 +59,6 @@ class ActivateOffice:
                 success=False,
                 action="office_activation",
                 message=f"Office 인증 준비 실패: {exc} {CLIPBOARD_AFTER_FAILURE_NOTICE}",
-                launched_process=str(self.excel_path),
                 copied_to_clipboard=True,
                 error=str(exc),
             )
@@ -73,7 +67,7 @@ class ActivateOffice:
             success=True,
             action="office_activation",
             message=f"{display_version} 제품키를 클립보드에 복사하고 Excel을 실행했습니다.",
-            launched_process=str(self.excel_path),
+            launched_process=launched_process,
             copied_to_clipboard=True,
         )
 

@@ -480,9 +480,8 @@ class ActionCenterPanel(QWidget):
         self.settings_table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             name = row[0] if row else ""
-            apply_status = row[1] if len(row) > 1 else ""
-            current_status = row[2] if len(row) > 2 else ""
-            detail = row[3] if len(row) > 3 else ""
+            current_status = row[1] if len(row) > 1 else ""
+            detail = row[2] if len(row) > 2 else ""
             self.settings_table.setItem(row_index, 0, table_item(name))
             self.settings_table.setItem(row_index, 1, status_item(current_status))
             detail_item = table_item(detail)
@@ -504,6 +503,18 @@ class ActionCenterPanel(QWidget):
 
     def _selected_setting_ids(self) -> list[str]:
         return [setting_id for setting_id, checkbox in self._checkboxes.items() if checkbox.isChecked()]
+
+    def _visible_setting_ids(self) -> list[str]:
+        is_win11 = self.win11_radio.isChecked()
+        setting_ids: list[str] = []
+        for _, options in SETTING_SECTIONS:
+            for option in options:
+                if option.setting_id is None:
+                    continue
+                if option.win11_only and not is_win11:
+                    continue
+                setting_ids.append(option.setting_id)
+        return setting_ids
 
     def _select_all(self) -> None:
         for checkbox in self._checkboxes.values():
@@ -528,7 +539,7 @@ class ActionCenterPanel(QWidget):
         if self._busy_coordinator and not self._busy_coordinator.try_begin("선택한 기본 설정을 적용하는 중..."):
             return
         try:
-            self._settings.apply_selected(self._selected_setting_ids())
+            self._settings.apply_selected(self._selected_setting_ids(), display_setting_ids=self._visible_setting_ids())
             self.render()
         finally:
             if self._busy_coordinator:
@@ -538,7 +549,7 @@ class ActionCenterPanel(QWidget):
         if self._busy_coordinator and not self._busy_coordinator.try_begin("상태를 새로고침하는 중..."):
             return
         try:
-            self._settings.check_status(self._settings.all_setting_ids())
+            self._settings.check_status(self._visible_setting_ids())
             self._pc_check.run_checks()
             self.render()
         finally:
@@ -653,13 +664,14 @@ class ActionCenterPanel(QWidget):
             return
         if self._busy_coordinator and not self._busy_coordinator.try_begin("프로그램을 실행하는 중..."):
             return
+        result = None
         try:
             result = self._launch_program_use_case.execute(program_id)
-            self._show_result(result)
+            self._show_failure_result(result, "실행 실패")
             self._refresh_after_action()
         finally:
             if self._busy_coordinator:
-                self._busy_coordinator.end("작업이 완료되었습니다.")
+                self._busy_coordinator.end(getattr(result, "message", "작업이 완료되었습니다."))
 
     def _run_maintenance(self, action: str) -> None:
         if self._maintenance_use_case is None:
@@ -693,7 +705,7 @@ class ActionCenterPanel(QWidget):
         return QMessageBox.question(self, confirmation.title, confirmation.message) == QMessageBox.Yes
 
     def _refresh_after_action(self) -> None:
-        self._settings.check_status(self._settings.all_setting_ids())
+        self._settings.check_status(self._visible_setting_ids())
         self._pc_check.run_checks()
         self.render()
 
@@ -704,6 +716,11 @@ class ActionCenterPanel(QWidget):
             QMessageBox.information(self, "완료", message)
         else:
             QMessageBox.warning(self, "실패", message)
+
+    def _show_failure_result(self, result: object, title: str) -> None:
+        if bool(getattr(result, "success", False)):
+            return
+        QMessageBox.warning(self, title, getattr(result, "message", ""))
 
     def _apply_test_mode(self) -> None:
         if not self._test_mode:

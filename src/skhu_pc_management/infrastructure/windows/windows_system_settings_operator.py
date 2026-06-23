@@ -53,29 +53,40 @@ class WindowsSystemSettingsOperator:
         self.command_runner.run(("net", "accounts", "/maxpwage:unlimited"))
         script = """
 $ErrorActionPreference = 'Stop'
+$excludedNames = @('Guest', 'DefaultAccount', 'WDAGUtilityAccount')
 $enabledUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object { $_.Enabled -eq $true })
 
 if ($enabledUsers.Count -eq 0) {
     throw "활성화된 로컬 사용자 계정을 찾을 수 없습니다."
 }
 
-foreach ($user in $enabledUsers) {
-    Set-LocalUser -Name $user.Name -PasswordNeverExpires $true -ErrorAction Stop
+$targetUsers = @($enabledUsers | Where-Object { $excludedNames -notcontains $_.Name })
+$setFailures = @()
+
+foreach ($user in $targetUsers) {
+    try {
+        Set-LocalUser -Name $user.Name -PasswordNeverExpires $true -ErrorAction Stop
+    } catch {
+        $setFailures += $user.Name
+    }
 }
 
-$failedUsers = @(
+$remainingUsers = @(
     Get-LocalUser -ErrorAction Stop |
-    Where-Object { $_.Enabled -eq $true -and $_.PasswordNeverExpires -ne $true } |
+    Where-Object {
+        $_.Enabled -eq $true `
+        -and $excludedNames -notcontains $_.Name `
+        -and $_.PasswordNeverExpires -ne $true
+    } |
     Select-Object -ExpandProperty Name
 )
 
-if ($failedUsers.Count -gt 0) {
-    throw ("암호 만료 비활성화 적용 실패 사용자: " + ($failedUsers -join ", "))
-}
-
 [PSCustomObject]@{
     EnabledUserCount = $enabledUsers.Count
-    FailedUsers = $failedUsers
+    TargetUserCount = $targetUsers.Count
+    ExcludedUsers = @($enabledUsers | Where-Object { $excludedNames -contains $_.Name } | Select-Object -ExpandProperty Name)
+    SetFailures = $setFailures
+    RemainingUsers = $remainingUsers
 } | ConvertTo-Json -Depth 3
 """.strip()
         self.command_runner.run(("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script))
