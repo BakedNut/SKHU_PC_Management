@@ -50,11 +50,6 @@ class StartupCoordinator:
             is_admin = self.admin_privilege_checker.is_running_as_admin()
             results = [
                 self._run_step("pc_info", self.pc_info_view_model.refresh),
-                self._run_step(
-                    "settings_status",
-                    lambda: self.settings_view_model.check_status(self.settings_view_model.all_setting_ids()),
-                ),
-                self._run_step("pc_checks", self.pc_check_view_model.run_checks),
             ]
             self.has_initialized = True
             return StartupResult(is_admin=is_admin, step_results=results)

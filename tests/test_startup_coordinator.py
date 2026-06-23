@@ -72,7 +72,7 @@ def test_startup_coordinator_reports_admin_status() -> None:
     assert all(step.success for step in result.step_results)
 
 
-def test_startup_coordinator_loads_pc_info_settings_and_pc_checks() -> None:
+def test_startup_coordinator_loads_only_pc_info_at_startup() -> None:
     pc_info = FakePcInfoViewModel()
     settings = FakeSettingsViewModel()
     pc_checks = FakePcCheckViewModel()
@@ -82,9 +82,9 @@ def test_startup_coordinator_loads_pc_info_settings_and_pc_checks() -> None:
 
     assert result.is_admin is True
     assert pc_info.refresh_count == 1
-    assert settings.check_requests == [["setting_a", "setting_b"]]
-    assert pc_checks.run_count == 1
-    assert [step.name for step in result.step_results] == ["pc_info", "settings_status", "pc_checks"]
+    assert settings.check_requests == []
+    assert pc_checks.run_count == 0
+    assert [step.name for step in result.step_results] == ["pc_info"]
 
 
 def test_startup_coordinator_continues_when_one_step_fails() -> None:
@@ -98,8 +98,8 @@ def test_startup_coordinator_continues_when_one_step_fails() -> None:
     assert result.has_failures is True
     assert result.step_results[0].success is False
     assert "pc info failed" in result.step_results[0].message
-    assert settings.check_requests == [["setting_a", "setting_b"]]
-    assert pc_checks.run_count == 1
+    assert settings.check_requests == []
+    assert pc_checks.run_count == 0
 
 
 def test_startup_coordinator_prevents_duplicate_initialization() -> None:
@@ -115,8 +115,8 @@ def test_startup_coordinator_prevents_duplicate_initialization() -> None:
     assert second.step_results == [second.step_results[0]]
     assert second.step_results[0].message == "이미 초기화되었습니다."
     assert pc_info.refresh_count == 1
-    assert settings.check_requests == [["setting_a", "setting_b"]]
-    assert pc_checks.run_count == 1
+    assert settings.check_requests == []
+    assert pc_checks.run_count == 0
 
 
 def test_startup_coordinator_reports_when_initialization_is_already_running() -> None:
