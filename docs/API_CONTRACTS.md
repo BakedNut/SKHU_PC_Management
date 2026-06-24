@@ -23,7 +23,7 @@
 | `ActivationResult` | `domain/activation/models.py` | 인증 준비 결과 |
 | `TaskbarApplyResult` | `domain/resources/models.py` | 작업표시줄 dry-run/적용 응답 |
 | `ResourceValidationResult` | `domain/resources/models.py` | 리소스 검증 결과 |
-| `PcInfo`, `DiskInfo` | `domain/pc/models.py` | PC 정보 snapshot |
+| `PcInfo`, `PcNetworkInfo`, `DiskInfo` | `domain/pc/models.py` | PC 정보 snapshot과 PC 정보 탭 표시용 대표 네트워크 정보 |
 | `NetworkAdapterInfo`, `StaticIpConfig` | `domain/network/models.py` | 네트워크 adapter와 입력 모델 |
 
 ## SafetyGuard 계약
@@ -64,6 +64,9 @@
 - `ApplySettings` post command 실패는 개별 `ApplyResult`나 상태 table detail에 전파하지 않는다.
 - `SettingsViewModel.apply_selected()`는 적용 후 `display_setting_ids` 전체를 다시 상태 확인한다.
 - `PcCheckViewModel`은 `office_install` 결과를 summary에는 쓰지만 table row에서는 제외한다.
+- `LoadPcInfo`의 `PcInfo.network_info`는 PC 정보 탭 표시용 대표 IP/MAC이다. 후보는 현재 Up 상태인 실제 물리 Ethernet 또는 Wi-Fi, 유효한 IPv4 주소, 기본 게이트웨이를 모두 만족해야 한다.
+- 대표 네트워크 선택은 Ethernet을 Wi-Fi보다 우선하고, 가상/VM/VPN/Docker/WSL/Bluetooth/Loopback/Tunnel 계열은 제외한다. 조건을 만족하는 후보가 없으면 `network_info=None`으로 반환한다.
+- 이 대표 네트워크 선택은 `ListNetworkAdapters`와 `NetshNetworkConfigurator.list_adapters()`의 어댑터 목록/정적 IP 설정 계약을 변경하지 않는다.
 
 ## Port 계약
 
@@ -109,7 +112,7 @@
 
 | ViewModel | 주요 state | result row |
 | --- | --- | --- |
-| `PcInfoViewModel` | PC/OS/hardware/security field, `open_pc_name_settings()` | PC 정보 rows, disk rows |
+| `PcInfoViewModel` | PC/OS/hardware/security field, representative network field, `open_pc_name_settings()` | PC 정보 rows, network rows, disk rows |
 | `SettingsViewModel` | `status_message`, `result_rows`, `warning_count`, `summary_text` | `list[tuple[설정 항목, 현재 상태, 상세]]` |
 | `PcCheckViewModel` | warning/error/unknown count, Office/power/auto shutdown summary | `list[tuple[항목, 상태, 상세]]`, Office row 제외 |
 | `NetworkViewModel` | adapters, selected adapter, form/status text | `current_network_info_rows` |

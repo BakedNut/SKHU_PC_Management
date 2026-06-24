@@ -1,3 +1,3 @@
-from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
+from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo, PcNetworkInfo
 
-__all__ = ["DiskInfo", "MemoryModuleInfo", "PcInfo"]
+__all__ = ["DiskInfo", "MemoryModuleInfo", "PcInfo", "PcNetworkInfo"]

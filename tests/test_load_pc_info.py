@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo, LoadPcInfoUseCase
-from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
+from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo, PcNetworkInfo
 from skhu_pc_management.infrastructure.windows.dxgi_gpu_reader import (
     DxgiGpuInfo,
     format_dxgi_gpu_memory,
@@ -82,6 +83,10 @@ class WmiItem:
     DefaultIPGateway: Any | None = None
     MACAddress: str | None = None
     IPConnectionMetric: Any | None = None
+    NetConnectionID: str | None = None
+    NetConnectionStatus: Any | None = None
+    NetEnabled: Any | None = None
+    Status: str | None = None
 
 
 class FakeRegistry:
@@ -235,12 +240,22 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
             ("Win32_NetworkAdapterConfiguration", None): [
                 WmiItem(
                     IPEnabled=True,
+                    Index="1",
                     Caption="Realtek Ethernet",
                     Description="Realtek Gaming 2.5GbE Family Controller",
                     IPAddress=["192.168.0.10"],
                     DefaultIPGateway=["192.168.0.1"],
                     MACAddress="AA-BB-CC-DD-EE-FF",
                     IPConnectionMetric="25",
+                )
+            ],
+            ("Win32_NetworkAdapter", None): [
+                WmiItem(
+                    Index="1",
+                    NetConnectionID="이더넷",
+                    Name="Realtek Ethernet",
+                    Description="Realtek Gaming 2.5GbE Family Controller",
+                    NetEnabled=True,
                 )
             ],
             ("Win32_Tpm", r"root\CIMV2\Security\MicrosoftTpm"): [WmiItem(SpecVersion="2.0, 1.3")],
@@ -262,6 +277,13 @@ def test_wmi_reader_maps_structured_values_without_real_windows_calls() -> None:
     assert pc_info.gpu_names == ["NVIDIA RTX"]
     assert pc_info.ipv4_address == "192.168.0.10"
     assert pc_info.mac_address == "AA-BB-CC-DD-EE-FF"
+    assert pc_info.network_info == PcNetworkInfo(
+        adapter_name="이더넷",
+        adapter_type="Ethernet",
+        ip_address="192.168.0.10",
+        mac_address="AA-BB-CC-DD-EE-FF",
+        description="Realtek Gaming 2.5GbE Family Controller",
+    )
     assert pc_info.disk_nvme_summary == "1개(512GB x1)"
     assert pc_info.disk_ssd_summary == "없음"
     assert pc_info.disks == [
@@ -289,7 +311,7 @@ def test_wmi_reader_uses_bcdedit_fallback_through_command_runner() -> None:
     pc_info = reader.read()
 
     assert pc_info.boot_mode == "UEFI"
-    assert command_runner.commands == [("bcdedit", "/enum", "{current}")]
+    assert command_runner.commands[-1] == ("bcdedit", "/enum", "{current}")
 
 
 def test_wmi_reader_returns_unknowns_when_values_are_missing() -> None:
@@ -583,35 +605,244 @@ def test_disk_index_and_storage_wmi_type_map_helpers(monkeypatch) -> None:
 def test_network_candidate_selection_prefers_ethernet_gateway_and_low_metric() -> None:
     candidates = [
         _NetworkCandidate(
-            name="Wi-Fi",
-            description="Wi-Fi",
-            ipv4_address="192.168.0.20",
-            has_gateway=True,
-            metric=10,
-            is_ethernet=False,
+            adapter_name="Wi-Fi",
+            adapter_type="Wi-Fi",
+            ip_address="192.168.0.20",
+            interface_metric=10,
         ),
         _NetworkCandidate(
-            name="Ethernet",
+            adapter_name="Ethernet",
+            adapter_type="Ethernet",
             description="Realtek",
-            ipv4_address="192.168.0.10",
-            has_gateway=True,
-            metric=25,
-            is_ethernet=True,
+            ip_address="192.168.0.10",
+            interface_metric=25,
         ),
         _NetworkCandidate(
-            name="Ethernet 2",
+            adapter_name="Ethernet 2",
+            adapter_type="Ethernet",
             description="Realtek",
-            ipv4_address="192.168.0.11",
-            has_gateway=False,
-            metric=5,
-            is_ethernet=True,
+            ip_address="192.168.0.11",
+            interface_metric=5,
         ),
     ]
 
     selected = _select_network_candidate(candidates)
 
     assert selected is not None
-    assert selected.ipv4_address == "192.168.0.10"
+    assert selected.ip_address == "192.168.0.11"
+
+
+def test_pc_info_network_selection_prefers_physical_ethernet_from_powershell() -> None:
+    command_runner = FakeCommandRunner(
+        json.dumps(
+            [
+                {
+                    "Name": "VirtualBox Host-Only Network",
+                    "InterfaceDescription": "VirtualBox Host-Only Ethernet Adapter",
+                    "Status": "Up",
+                    "MacAddress": "00-11-22-33-44-55",
+                    "IpAddress": "192.168.56.1",
+                    "Gateway": "192.168.56.254",
+                    "InterfaceMetric": 1,
+                    "RouteMetric": 1,
+                },
+                {
+                    "Name": "VPN",
+                    "InterfaceDescription": "WireGuard Tunnel",
+                    "Status": "Up",
+                    "MacAddress": "00-11-22-33-44-66",
+                    "IpAddress": "10.0.0.2",
+                    "Gateway": "10.0.0.1",
+                    "InterfaceMetric": 1,
+                    "RouteMetric": 1,
+                },
+                {
+                    "Name": "Wi-Fi",
+                    "InterfaceDescription": "Intel(R) Wi-Fi 6 AX201 802.11ax",
+                    "Status": "Up",
+                    "MacAddress": "AA:BB:CC:DD:EE:01",
+                    "IpAddress": "192.168.0.20",
+                    "Gateway": "192.168.0.1",
+                    "InterfaceMetric": 5,
+                    "RouteMetric": 5,
+                },
+                {
+                    "Name": "이더넷",
+                    "InterfaceDescription": "Realtek Gaming 2.5GbE Family Controller",
+                    "Status": "Up",
+                    "MacAddress": "AA:BB:CC:DD:EE:FF",
+                    "IpAddress": "192.168.0.10",
+                    "Gateway": "192.168.0.1",
+                    "InterfaceMetric": 25,
+                    "RouteMetric": 25,
+                },
+            ]
+        )
+    )
+    reader = ControlledWmiPcInfoReader({}, command_runner=command_runner)
+
+    pc_info = reader.read()
+
+    assert pc_info.network_info == PcNetworkInfo(
+        adapter_name="이더넷",
+        adapter_type="Ethernet",
+        ip_address="192.168.0.10",
+        mac_address="AA-BB-CC-DD-EE-FF",
+        description="Realtek Gaming 2.5GbE Family Controller",
+    )
+    assert pc_info.ipv4_address == "192.168.0.10"
+    assert pc_info.mac_address == "AA-BB-CC-DD-EE-FF"
+
+
+def test_pc_info_network_selection_uses_wifi_when_ethernet_has_no_gateway() -> None:
+    command_runner = FakeCommandRunner(
+        json.dumps(
+            [
+                {
+                    "Name": "이더넷",
+                    "InterfaceDescription": "Realtek PCIe GbE Family Controller",
+                    "Status": "Up",
+                    "MacAddress": "AA-BB-CC-DD-EE-10",
+                    "IpAddress": "192.168.0.10",
+                    "Gateway": "",
+                    "InterfaceMetric": 1,
+                    "RouteMetric": 1,
+                },
+                {
+                    "Name": "Wi-Fi",
+                    "InterfaceDescription": "Intel(R) Wi-Fi 6 AX201 802.11ax",
+                    "Status": "Up",
+                    "MacAddress": "AA-BB-CC-DD-EE-20",
+                    "IpAddress": "192.168.0.20",
+                    "Gateway": "192.168.0.1",
+                    "InterfaceMetric": 30,
+                    "RouteMetric": 30,
+                },
+            ]
+        )
+    )
+    reader = ControlledWmiPcInfoReader({}, command_runner=command_runner)
+
+    pc_info = reader.read()
+
+    assert pc_info.network_info is not None
+    assert pc_info.network_info.adapter_type == "Wi-Fi"
+    assert pc_info.network_info.ip_address == "192.168.0.20"
+    assert pc_info.network_info.mac_address == "AA-BB-CC-DD-EE-20"
+
+
+def test_pc_info_network_selection_excludes_apipa_ipv4() -> None:
+    command_runner = FakeCommandRunner(
+        json.dumps(
+            [
+                {
+                    "Name": "이더넷",
+                    "InterfaceDescription": "Realtek PCIe GbE Family Controller",
+                    "Status": "Up",
+                    "MacAddress": "AA-BB-CC-DD-EE-10",
+                    "IpAddress": "169.254.10.20",
+                    "Gateway": "192.168.0.1",
+                    "InterfaceMetric": 1,
+                    "RouteMetric": 1,
+                }
+            ]
+        )
+    )
+    reader = ControlledWmiPcInfoReader({}, command_runner=command_runner)
+
+    pc_info = reader.read()
+
+    assert pc_info.network_info is None
+    assert pc_info.ipv4_address is None
+    assert pc_info.mac_address is None
+
+
+def test_pc_info_network_selection_returns_none_when_no_adapter_matches() -> None:
+    command_runner = FakeCommandRunner(
+        json.dumps(
+            [
+                {
+                    "Name": "Docker Desktop",
+                    "InterfaceDescription": "Docker Virtual Ethernet",
+                    "Status": "Up",
+                    "MacAddress": "AA-BB-CC-DD-EE-10",
+                    "IpAddress": "192.168.65.1",
+                    "Gateway": "192.168.65.254",
+                    "InterfaceMetric": 1,
+                    "RouteMetric": 1,
+                }
+            ]
+        )
+    )
+    reader = ControlledWmiPcInfoReader({}, command_runner=command_runner)
+
+    pc_info = reader.read()
+
+    assert pc_info.network_info is None
+
+
+def test_pc_info_network_selection_handles_single_powershell_json_object() -> None:
+    command_runner = FakeCommandRunner(
+        json.dumps(
+            {
+                "Name": "Ethernet",
+                "InterfaceDescription": "Intel(R) Ethernet Connection I219-LM",
+                "Status": "Up",
+                "MacAddress": "001122334455",
+                "IpAddress": "192.168.10.20",
+                "Gateway": "192.168.10.1",
+                "InterfaceMetric": 10,
+                "RouteMetric": 10,
+            }
+        )
+    )
+    reader = ControlledWmiPcInfoReader({}, command_runner=command_runner)
+
+    pc_info = reader.read()
+
+    assert pc_info.network_info is not None
+    assert pc_info.network_info.adapter_name == "Ethernet"
+    assert pc_info.network_info.ip_address == "192.168.10.20"
+    assert pc_info.network_info.mac_address == "00-11-22-33-44-55"
+
+
+def test_pc_info_network_selection_falls_back_to_wmi_when_powershell_fails() -> None:
+    command_runner = FakeCommandRunner("not json")
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_NetworkAdapterConfiguration", None): [
+                WmiItem(
+                    IPEnabled=True,
+                    Index="7",
+                    Description="Intel(R) Wi-Fi 6 AX201 802.11ax",
+                    IPAddress=["192.168.30.40"],
+                    DefaultIPGateway=["192.168.30.1"],
+                    MACAddress="AA:BB:CC:DD:EE:77",
+                    IPConnectionMetric="55",
+                )
+            ],
+            ("Win32_NetworkAdapter", None): [
+                WmiItem(
+                    Index="7",
+                    NetConnectionID="Wi-Fi",
+                    Name="Wi-Fi",
+                    Description="Intel(R) Wi-Fi 6 AX201 802.11ax",
+                    NetConnectionStatus=2,
+                )
+            ],
+        },
+        command_runner=command_runner,
+    )
+
+    pc_info = reader.read()
+
+    assert pc_info.network_info == PcNetworkInfo(
+        adapter_name="Wi-Fi",
+        adapter_type="Wi-Fi",
+        ip_address="192.168.30.40",
+        mac_address="AA-BB-CC-DD-EE-77",
+        description="Intel(R) Wi-Fi 6 AX201 802.11ax",
+    )
 
 
 def test_get_adapters_addresses_candidate_selection_and_mac_formatting() -> None:

@@ -58,9 +58,14 @@ PC 정보의 `PC 이름 변경`은 `pcActionPrimaryButton` objectName을 사용�
 | 요약 | PC 이름 등 핵심 정보 |
 | 시스템 정보 | PC 이름, 사용자, Windows 버전 |
 | 하드웨어 정보 | CPU, RAM, GPU |
+| 네트워크 정보 | 대표 네트워크 어댑터, IP 주소, MAC 주소 |
 | 디스크 table | 모델, 유형, 정격/실제 용량 |
 | PC 작업 | `PC 이름 변경` 버튼 하나 |
 | 보안/호환 상태 | TPM, Secure Boot, Boot Mode |
+
+PC 정보 화면의 IP 주소와 MAC 주소는 현재 인터넷 연결 조건을 만족하는 실제 물리 Ethernet 또는 Wi-Fi 어댑터 기준으로 표시한다. Ethernet과 Wi-Fi가 동시에 조건을 만족하면 Ethernet을 우선한다.
+
+가상 어댑터, VM/VPN, Docker/WSL, Bluetooth, Loopback/Tunnel 계열은 대표 IP/MAC 표시 대상에서 제외한다. 후보는 Up 상태, 유효한 IPv4 주소, 기본 게이트웨이를 모두 갖춰야 하며 조건을 만족하는 어댑터가 없으면 IP 주소와 MAC 주소를 `알 수 없음`으로 표시한다.
 
 `PC 이름 변경`은 Windows 설정 시스템 정보 화면을 열며 앱 내부 rename dialog를 표시하지 않는다. 테스트 모드에서는 버튼을 비활성화한다.
 
@@ -121,6 +126,8 @@ PC 정보의 `PC 이름 변경`은 `pcActionPrimaryButton` objectName을 사용�
 | 현재 네트워크 상태 | 현재 adapter, IP 할당 방식, IP, subnet, gateway, DNS table |
 
 네트워크 상단 summary card(`현재 어댑터`, `IP 할당 방식`, `IP 주소`)는 없다. 중복 정보는 현재 상태 table에서만 표시한다.
+
+PC 정보 화면의 대표 IP/MAC 선택 기준은 이 화면의 어댑터 목록 조회, 현재 상태 표, 고정 IP/DHCP 설정 동작을 변경하지 않는다.
 
 앱 시작 시 네트워크 어댑터 조회를 자동 실행하지 않는다. 네트워크 탭 첫 진입 시 어댑터 목록과 현재 상태 table을 자동으로 1회 불러온다. 이후 같은 탭 재진입 시 자동 재조회는 반복하지 않고, 사용자가 `어댑터 새로고침`을 누르면 다시 실행한다.
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import json
 import socket
 from dataclasses import dataclass
 import getpass
 import re
 from typing import Any
 
-from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
+from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo, PcNetworkInfo
 from skhu_pc_management.infrastructure.windows.dxgi_gpu_reader import read_dxgi_gpu_info
-from skhu_pc_management.infrastructure.windows.network_identity_reader import normalize_mac_address, read_network_identity
+from skhu_pc_management.infrastructure.windows.network_identity_reader import normalize_mac_address
 from skhu_pc_management.ports.command_runner import CommandRunner
 from skhu_pc_management.ports.registry import Registry
 
@@ -26,7 +27,7 @@ class WmiPcInfoReader:
         gpu_name, gpu_memory, gpu_names = self._get_gpu_info()
         disks = self._get_disks()
         disk_summaries = _disk_type_summaries(disks)
-        ipv4_address, mac_address = self._get_network_info()
+        network_info = self._get_active_network_info()
 
         return PcInfo(
             computer_name=self._get_computer_name(),
@@ -45,8 +46,9 @@ class WmiPcInfoReader:
             gpu_memory=gpu_memory,
             gpu_names=gpu_names,
             disks=disks,
-            ipv4_address=ipv4_address,
-            mac_address=mac_address,
+            ipv4_address=network_info.ip_address if network_info else None,
+            mac_address=network_info.mac_address if network_info else None,
+            network_info=network_info,
             disk_nvme_summary=disk_summaries["NVMe"],
             disk_ssd_summary=disk_summaries["SSD"],
             disk_hdd_summary=disk_summaries["HDD"],
@@ -194,26 +196,54 @@ class WmiPcInfoReader:
             )
         return disks
 
-    def _get_network_info(self) -> tuple[str | None, str | None]:
-        network_identity = self._read_network_identity()
-        if network_identity is not None:
-            return network_identity
+    def _get_active_network_info(self) -> PcNetworkInfo | None:
+        candidate = self._get_active_network_info_with_powershell()
+        if candidate is None:
+            candidate = self._get_active_network_info_with_wmi()
+        if candidate is None:
+            return None
+        return PcNetworkInfo(
+            adapter_name=candidate.adapter_name,
+            adapter_type=candidate.adapter_type,
+            ip_address=candidate.ip_address,
+            mac_address=normalize_mac_address(candidate.mac_address) or candidate.mac_address,
+            description=candidate.description,
+        )
 
+    def _get_active_network_info_with_powershell(self) -> "_NetworkCandidate | None":
+        if self.command_runner is None:
+            return None
+        try:
+            output = self.command_runner.run(
+                (
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    _ACTIVE_NETWORK_INFO_SCRIPT,
+                )
+            )
+            candidates = _parse_powershell_network_candidates(output)
+        except Exception:
+            return None
+        return _select_network_candidate(candidates)
+
+    def _get_active_network_info_with_wmi(self) -> "_NetworkCandidate | None":
+        adapters_by_index = {
+            _to_int(_get_value(item, "Index")): item
+            for item in self._wmi_items("Win32_NetworkAdapter")
+            if _to_int(_get_value(item, "Index")) is not None
+        }
         candidates: list[_NetworkCandidate] = []
         for item in self._wmi_items("Win32_NetworkAdapterConfiguration"):
-            candidate = _network_candidate_from_wmi_item(item)
+            candidate = _network_candidate_from_wmi_item(item, adapters_by_index)
             if candidate is not None:
                 candidates.append(candidate)
-        selected = _select_network_candidate(candidates)
-        if selected is None:
-            return "연결된 이더넷 없음", "알 수 없음"
-        return selected.ipv4_address, normalize_mac_address(selected.mac_address) or "알 수 없음"
+        return _select_network_candidate(candidates)
 
     def _read_dxgi_gpu_info(self) -> tuple[str, str, list[str]] | None:
         return read_dxgi_gpu_info()
-
-    def _read_network_identity(self) -> tuple[str, str] | None:
-        return read_network_identity()
 
     def _get_disk_type(self, disk: Any) -> str:
         return _infer_disk_type(disk, None)
@@ -356,14 +386,13 @@ class _GpuCandidate:
 
 @dataclass(frozen=True)
 class _NetworkCandidate:
-    name: str
-    description: str
-    ipv4_address: str
+    adapter_name: str
+    adapter_type: str
+    ip_address: str
     mac_address: str | None = None
-    has_gateway: bool = False
-    metric: int | None = None
-    is_ethernet: bool = False
-    is_up: bool = True
+    description: str = ""
+    interface_metric: int = 9999
+    route_metric: int = 9999
 
 
 def _build_disk_info(
@@ -857,6 +886,21 @@ def _to_int(value: Any | None) -> int | None:
         return None
 
 
+def _parse_boolish(value: Any | None) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"true", "enabled", "yes", "on", "1", "예", "사용", "사용함"}:
+        return True
+    if text in {"false", "disabled", "no", "off", "0", "아니요", "사용 안 함", "사용안함"}:
+        return False
+    return None
+
+
 def _bytes_to_gb(value: int | None) -> float | None:
     if not value:
         return None
@@ -997,69 +1041,181 @@ def _unique_preserving_order(values: Any) -> list[str]:
     return result
 
 
-def _network_candidate_from_wmi_item(item: Any) -> _NetworkCandidate | None:
-    ip_enabled = _to_string(_get_value(item, "IPEnabled"))
-    if ip_enabled and ip_enabled.lower() == "false":
+def _parse_powershell_network_candidates(output: str) -> list[_NetworkCandidate]:
+    if not output.strip():
+        return []
+    data = json.loads(output)
+    items = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
+    candidates: list[_NetworkCandidate] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        candidate = _network_candidate_from_powershell_item(item)
+        if candidate is not None:
+            candidates.append(candidate)
+    return candidates
+
+
+def _network_candidate_from_powershell_item(item: dict[str, Any]) -> _NetworkCandidate | None:
+    name = _to_string(item.get("Name")) or ""
+    description = _to_string(item.get("InterfaceDescription")) or name
+    status = (_to_string(item.get("Status")) or "").lower()
+    if status != "up":
         return None
-    name = _to_string(_get_value(item, "Caption")) or _to_string(_get_value(item, "Description")) or ""
-    description = _to_string(_get_value(item, "Description")) or name
-    text = f"{name} {description}"
-    if _is_excluded_network_adapter(text):
-        return None
-    ipv4_addresses = [value for value in _to_string_list(_get_value(item, "IPAddress")) if _is_ipv4_address(value)]
-    if not ipv4_addresses:
-        return None
-    gateways = [value for value in _to_string_list(_get_value(item, "DefaultIPGateway")) if _is_ipv4_address(value)]
-    mac_address = _to_string(_get_value(item, "MACAddress"))
-    metric = _to_int(_get_value(item, "IPConnectionMetric"))
-    return _NetworkCandidate(
-        name=name,
+    return _network_candidate_from_values(
+        adapter_name=name,
         description=description,
-        ipv4_address=ipv4_addresses[0],
+        ip_address=_to_string(item.get("IpAddress")),
+        mac_address=_to_string(item.get("MacAddress")),
+        gateway=_to_string(item.get("Gateway")),
+        interface_metric=_to_int(item.get("InterfaceMetric")),
+        route_metric=_to_int(item.get("RouteMetric")),
+    )
+
+
+def _network_candidate_from_wmi_item(item: Any, adapters_by_index: dict[int | None, Any]) -> _NetworkCandidate | None:
+    if _parse_boolish(_get_value(item, "IPEnabled")) is False:
+        return None
+
+    adapter = adapters_by_index.get(_to_int(_get_value(item, "Index")))
+    if adapter is None or not _wmi_adapter_is_up(adapter):
+        return None
+
+    name = (
+        _to_string(_get_value(adapter, "NetConnectionID"))
+        or _to_string(_get_value(adapter, "Name"))
+        or _to_string(_get_value(item, "Caption"))
+        or _to_string(_get_value(item, "Description"))
+        or ""
+    )
+    description = _to_string(_get_value(adapter, "Description")) or _to_string(_get_value(item, "Description")) or name
+    ipv4_addresses = [value for value in _to_string_list(_get_value(item, "IPAddress")) if _is_valid_display_ipv4(value)]
+    gateways = [value for value in _to_string_list(_get_value(item, "DefaultIPGateway")) if _is_valid_display_ipv4(value)]
+    return _network_candidate_from_values(
+        adapter_name=name,
+        description=description,
+        ip_address=ipv4_addresses[0] if ipv4_addresses else None,
+        mac_address=_to_string(_get_value(item, "MACAddress")),
+        gateway=gateways[0] if gateways else None,
+        interface_metric=_to_int(_get_value(item, "IPConnectionMetric")),
+        route_metric=9999,
+    )
+
+
+def _network_candidate_from_values(
+    adapter_name: str,
+    description: str,
+    ip_address: str | None,
+    mac_address: str | None,
+    gateway: str | None,
+    interface_metric: int | None,
+    route_metric: int | None,
+) -> _NetworkCandidate | None:
+    if not adapter_name:
+        return None
+    if _is_excluded_network_adapter(adapter_name, description):
+        return None
+    adapter_type = _classify_network_adapter(adapter_name, description)
+    if adapter_type is None:
+        return None
+    if not ip_address or not _is_valid_display_ipv4(ip_address):
+        return None
+    if not gateway or not _is_valid_display_ipv4(gateway):
+        return None
+    return _NetworkCandidate(
+        adapter_name=adapter_name,
+        adapter_type=adapter_type,
+        ip_address=ip_address,
+        description=description,
         mac_address=mac_address,
-        has_gateway=bool(gateways),
-        metric=metric,
-        is_ethernet=_looks_like_ethernet(text),
+        interface_metric=interface_metric or 9999,
+        route_metric=route_metric or 9999,
     )
 
 
 def _select_network_candidate(candidates: list[_NetworkCandidate]) -> _NetworkCandidate | None:
     if not candidates:
         return None
-    return sorted(
-        candidates,
-        key=lambda candidate: (
-            not candidate.is_ethernet,
-            not candidate.has_gateway,
-            candidate.metric if candidate.metric not in (None, 0) else 2**31 - 1,
-        ),
-    )[0]
+    return sorted(candidates, key=_network_candidate_sort_key)[0]
 
 
-def _is_excluded_network_adapter(text: str) -> bool:
-    lower = text.lower()
+def _network_candidate_sort_key(candidate: _NetworkCandidate) -> tuple[int, int, int, str]:
+    adapter_type_priority = 0 if candidate.adapter_type == "Ethernet" else 1
+    return (
+        adapter_type_priority,
+        candidate.interface_metric or 9999,
+        candidate.route_metric or 9999,
+        candidate.adapter_name.lower(),
+    )
+
+
+def _is_excluded_network_adapter(name: str, description: str = "") -> bool:
+    lower = f"{name} {description}".lower()
     return any(
         token in lower
         for token in (
-            "tailscale",
-            "wireguard",
-            "vpn",
-            "tunnel",
             "virtual",
-            "vethernet",
-            "hyper-v",
-            "vmware",
             "virtualbox",
+            "vmware",
+            "hyper-v",
+            "vpn",
+            "openvpn",
+            "wireguard",
+            "tailscale",
+            "zerotier",
+            "tap",
+            "tun",
+            "tunnel",
+            "docker",
+            "wsl",
+            "bluetooth",
             "loopback",
-            "tap-",
-            "tap windows",
+            "teredo",
+            "isatap",
+            "pseudo",
+            "npcap",
+            "hamachi",
+            "fortinet",
+            "anyconnect",
+            "pulse secure",
+            "check point",
         )
     )
 
 
-def _looks_like_ethernet(text: str) -> bool:
-    lower = text.lower()
-    return any(token in lower for token in ("ethernet", "이더넷", "realtek", "gbe", "2.5gbe", "lan"))
+def _classify_network_adapter(name: str, description: str) -> str | None:
+    lower = f"{name} {description}".lower()
+    if any(token in lower for token in ("wi-fi", "wifi", "wireless", "wlan", "802.11", "무선")):
+        return "Wi-Fi"
+    if any(
+        token in lower
+        for token in (
+            "ethernet",
+            "이더넷",
+            "realtek",
+            "intel(r) ethernet",
+            "gbe",
+            "2.5gbe",
+            "gigabit",
+            "lan",
+            "i219",
+            "i225",
+            "i226",
+        )
+    ):
+        return "Ethernet"
+    return None
+
+
+def _wmi_adapter_is_up(adapter: Any) -> bool:
+    net_enabled = _parse_boolish(_get_value(adapter, "NetEnabled"))
+    if net_enabled is not None:
+        return net_enabled
+    status = (_to_string(_get_value(adapter, "NetConnectionStatus")) or "").lower()
+    if status in {"2", "connected", "up"}:
+        return True
+    text_status = (_to_string(_get_value(adapter, "Status")) or "").lower()
+    return text_status in {"ok", "up"}
 
 
 def _is_ipv4_address(value: str) -> bool:
@@ -1070,6 +1226,12 @@ def _is_ipv4_address(value: str) -> bool:
         return all(0 <= int(part) <= 255 for part in parts)
     except ValueError:
         return False
+
+
+def _is_valid_display_ipv4(value: str) -> bool:
+    if not _is_ipv4_address(value):
+        return False
+    return not (value.startswith("127.") or value.startswith("169.254.") or value == "0.0.0.0")
 
 
 def _to_string_list(value: Any | None) -> list[str]:
@@ -1111,3 +1273,47 @@ def _get_windows_user_name() -> str | None:
     except Exception:
         return None
     return None
+
+
+_ACTIVE_NETWORK_INFO_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+
+$adapters = Get-NetAdapter -Physical | Where-Object {
+    $_.Status -eq 'Up' -and $_.HardwareInterface -eq $true
+}
+
+$result = foreach ($a in $adapters) {
+    $ipcfg = Get-NetIPConfiguration -InterfaceIndex $a.ifIndex
+    $ipv4 = $ipcfg.IPv4Address |
+        Where-Object {
+            $_.IPAddress -and
+            $_.IPAddress -notmatch '^127\.' -and
+            $_.IPAddress -notmatch '^169\.254\.' -and
+            $_.IPAddress -ne '0.0.0.0'
+        } |
+        Select-Object -First 1
+
+    $gateway = $ipcfg.IPv4DefaultGateway | Select-Object -First 1
+    $ipInterface = Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    $route = Get-NetRoute -InterfaceIndex $a.ifIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+        Sort-Object RouteMetric |
+        Select-Object -First 1
+
+    if ($ipv4 -and $gateway) {
+        [PSCustomObject]@{
+            Name = $a.Name
+            InterfaceDescription = $a.InterfaceDescription
+            Status = $a.Status
+            MacAddress = $a.MacAddress
+            InterfaceIndex = $a.ifIndex
+            IpAddress = $ipv4.IPAddress
+            Gateway = $gateway.NextHop
+            InterfaceMetric = if ($ipInterface) { $ipInterface.InterfaceMetric } else { 9999 }
+            RouteMetric = if ($route) { $route.RouteMetric } else { 9999 }
+        }
+    }
+}
+
+$result | ConvertTo-Json -Depth 4
+""".strip()
