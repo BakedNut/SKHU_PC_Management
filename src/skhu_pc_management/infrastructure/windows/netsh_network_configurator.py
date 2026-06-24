@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult, StaticIpConfig
+from skhu_pc_management.infrastructure.windows.network_identity_reader import read_network_adapters_fast
 from skhu_pc_management.ports.command_runner import CommandRunner
 
 
@@ -14,6 +15,14 @@ class NetshNetworkConfigurator:
     command_runner: CommandRunner
 
     def list_adapters(self) -> list[NetworkAdapterInfo]:
+        try:
+            adapters = read_network_adapters_fast()
+        except Exception:
+            adapters = []
+
+        if adapters:
+            return adapters
+
         try:
             adapters = self._list_adapters_with_powershell()
         except Exception:
@@ -430,6 +439,9 @@ def _is_supported_adapter_name(name: str) -> bool:
     lower = name.lower()
     excluded_tokens = (
         "bluetooth",
+        "docker",
+        "wsl",
+        "vethernet",
         "virtualbox",
         "vmware",
         "hyper-v",

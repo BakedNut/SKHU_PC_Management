@@ -21,8 +21,10 @@ from skhu_pc_management.infrastructure.windows.network_identity_reader import (
     IF_TYPE_IEEE80211,
     NetworkIdentityCandidate,
     normalize_mac_address,
+    read_network_adapters_fast,
     select_network_identity_candidate,
 )
+from skhu_pc_management.infrastructure.windows import network_identity_reader
 from skhu_pc_management.infrastructure.windows import wmi_pc_info_reader
 from skhu_pc_management.infrastructure.windows.wmi_pc_info_reader import (
     _PhysicalDiskMetadata,
@@ -1013,6 +1015,26 @@ def test_get_adapters_addresses_candidate_selection_prefers_low_metric_within_sa
 
     assert selected is not None
     assert selected.ip == "192.168.0.11"
+
+
+def test_get_adapters_addresses_fast_adapter_list_filters_and_sorts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate("192.168.0.30", "00:11:22:33:44:30", "Wi-Fi", IF_TYPE_IEEE80211, True, True, 5),
+            NetworkIdentityCandidate("192.168.65.1", "00:11:22:33:44:65", "vEthernet Docker", IF_TYPE_ETHERNET_CSMACD, True, True, 1),
+            NetworkIdentityCandidate("192.168.0.10", "00:11:22:33:44:10", "Ethernet", IF_TYPE_ETHERNET_CSMACD, True, True, 25),
+            NetworkIdentityCandidate("192.168.0.11", "00:11:22:33:44:11", "Ethernet 2", IF_TYPE_ETHERNET_CSMACD, False, False, 1),
+        ],
+    )
+
+    adapters = read_network_adapters_fast()
+
+    assert [adapter.name for adapter in adapters] == ["Ethernet", "Ethernet 2", "Wi-Fi"]
+    assert adapters[0].is_enabled is True
+    assert adapters[0].gateway is None
+    assert adapters[0].is_dhcp_enabled is None
 
 
 def test_wmi_reader_uses_cpu_registry_fast_path_without_processor_wmi() -> None:

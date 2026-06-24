@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import socket
 
+from skhu_pc_management.domain.network.models import NetworkAdapterInfo
 from skhu_pc_management.domain.pc.models import PcNetworkInfo
 
 
@@ -23,6 +24,10 @@ class NetworkIdentityCandidate:
     description: str = ""
     adapter_name: str = ""
     adapter_type: str = ""
+    ip_addresses: tuple[str, ...] = ()
+    gateway: str | None = None
+    dns_servers: tuple[str, ...] = ()
+    prefix_length: int | None = None
 
 
 def read_network_identity() -> tuple[str, str] | None:
@@ -47,6 +52,26 @@ def read_active_network_info() -> PcNetworkInfo | None:
         ip_address=selected.ip,
         mac_address=normalize_mac_address(selected.mac) or selected.mac or None,
         description=selected.description or selected.friendly_name,
+    )
+
+
+def read_network_adapters_fast() -> list[NetworkAdapterInfo]:
+    candidates = _get_adapters_addresses_candidates()
+    adapters = [
+        _network_adapter_info_from_candidate(candidate)
+        for candidate in candidates
+        if candidate.if_type in {IF_TYPE_ETHERNET_CSMACD, IF_TYPE_IEEE80211}
+        and not is_excluded_adapter_name(_candidate_name_text(candidate))
+    ]
+    return sorted(
+        adapters,
+        key=lambda adapter: (
+            0 if _adapter_type_from_name(adapter.name, adapter.description) == "Ethernet" else 1,
+            not adapter.is_enabled,
+            not bool(adapter.gateway),
+            _adapter_metric(adapter, candidates),
+            adapter.name.lower(),
+        ),
     )
 
 
@@ -116,7 +141,7 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
     AF_UNSPEC = 0
     AF_INET = 2
     NO_ERROR = 0
-    GAA_FLAGS = 0x0002 | 0x0004 | 0x0008
+    GAA_FLAGS = 0x0002 | 0x0004
 
     class SOCKET_ADDRESS(ctypes.Structure):
         _fields_ = (("lpSockaddr", ctypes.c_void_p), ("iSockaddrLength", ctypes.c_int))
@@ -137,6 +162,13 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
         ("Flags", DWORD),
         ("Next", ctypes.POINTER(IP_ADAPTER_UNICAST_ADDRESS)),
         ("Address", SOCKET_ADDRESS),
+        ("PrefixOrigin", ctypes.c_int),
+        ("SuffixOrigin", ctypes.c_int),
+        ("DadState", ctypes.c_int),
+        ("ValidLifetime", ULONG),
+        ("PreferredLifetime", ULONG),
+        ("LeaseLifetime", ULONG),
+        ("OnLinkPrefixLength", ctypes.c_ubyte),
     )
 
     class IP_ADAPTER_GATEWAY_ADDRESS(ctypes.Structure):
@@ -146,6 +178,16 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
         ("Length", ULONG),
         ("Reserved", DWORD),
         ("Next", ctypes.POINTER(IP_ADAPTER_GATEWAY_ADDRESS)),
+        ("Address", SOCKET_ADDRESS),
+    )
+
+    class IP_ADAPTER_DNS_SERVER_ADDRESS(ctypes.Structure):
+        pass
+
+    IP_ADAPTER_DNS_SERVER_ADDRESS._fields_ = (
+        ("Length", ULONG),
+        ("Reserved", DWORD),
+        ("Next", ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
         ("Address", SOCKET_ADDRESS),
     )
 
@@ -160,7 +202,7 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
         ("FirstUnicastAddress", ctypes.POINTER(IP_ADAPTER_UNICAST_ADDRESS)),
         ("FirstAnycastAddress", ctypes.c_void_p),
         ("FirstMulticastAddress", ctypes.c_void_p),
-        ("FirstDnsServerAddress", ctypes.c_void_p),
+        ("FirstDnsServerAddress", ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
         ("DnsSuffix", wintypes.LPWSTR),
         ("Description", wintypes.LPWSTR),
         ("FriendlyName", wintypes.LPWSTR),
@@ -198,9 +240,14 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
     while adapter:
         item = adapter.contents
         ip = _first_ipv4_address(item.FirstUnicastAddress, SOCKADDR_IN, AF_INET)
+        ipv4_addresses = _ipv4_addresses(item.FirstUnicastAddress, SOCKADDR_IN, AF_INET)
+        ip = ipv4_addresses[0] if ipv4_addresses else None
         if ip:
             mac_bytes = bytes(item.PhysicalAddress[: item.PhysicalAddressLength])
             mac = "-".join(f"{byte:02X}" for byte in mac_bytes[:6]) if len(mac_bytes) >= 6 else ""
+            gateways = _socket_ipv4_addresses(item.FirstGatewayAddress, SOCKADDR_IN, AF_INET)
+            dns_servers = _socket_ipv4_addresses(item.FirstDnsServerAddress, SOCKADDR_IN, AF_INET)
+            prefix_length = _first_ipv4_prefix_length(item.FirstUnicastAddress, SOCKADDR_IN, AF_INET)
             candidates.append(
                 NetworkIdentityCandidate(
                     ip=ip,
@@ -213,6 +260,10 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
                     description=item.Description or "",
                     adapter_name=(item.AdapterName or b"").decode(errors="ignore"),
                     adapter_type=_adapter_type_from_if_type(int(item.IfType)),
+                    ip_addresses=tuple(ipv4_addresses),
+                    gateway=gateways[0] if gateways else None,
+                    dns_servers=tuple(dns_servers),
+                    prefix_length=prefix_length,
                 )
             )
         adapter = item.Next
@@ -241,14 +292,71 @@ def _adapter_type_from_if_type(if_type: int) -> str:
     return "Unknown"
 
 
+def _network_adapter_info_from_candidate(candidate: NetworkIdentityCandidate) -> NetworkAdapterInfo:
+    return NetworkAdapterInfo(
+        name=candidate.friendly_name or candidate.adapter_name or candidate.description or "Unknown",
+        description=candidate.description or candidate.friendly_name,
+        is_enabled=candidate.oper_status_up,
+        mac_address=normalize_mac_address(candidate.mac) or candidate.mac or None,
+        ip_addresses=candidate.ip_addresses or ((candidate.ip,) if candidate.ip else ()),
+        subnet_mask=_prefix_length_to_subnet_mask(candidate.prefix_length) if candidate.prefix_length is not None else None,
+        gateway=candidate.gateway,
+        dns_servers=candidate.dns_servers,
+        is_dhcp_enabled=None,
+    )
+
+
+def _adapter_type_from_name(name: str, description: str) -> str:
+    lower = f"{name} {description}".lower()
+    if any(token in lower for token in ("wi-fi", "wifi", "wireless", "wlan", "802.11", "무선")):
+        return "Wi-Fi"
+    return "Ethernet"
+
+
+def _adapter_metric(adapter: NetworkAdapterInfo, candidates: list[NetworkIdentityCandidate]) -> int:
+    for candidate in candidates:
+        if adapter.name in {candidate.friendly_name, candidate.adapter_name, candidate.description}:
+            return candidate.metric if candidate.metric not in (None, 0) else 2**31 - 1
+    return 2**31 - 1
+
+
+def _prefix_length_to_subnet_mask(prefix_length: int) -> str | None:
+    if not 0 <= prefix_length <= 32:
+        return None
+    mask = (0xFFFFFFFF << (32 - prefix_length)) & 0xFFFFFFFF
+    return ".".join(str((mask >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+
 def _first_ipv4_address(address, sockaddr_type, af_inet: int) -> str | None:
+    addresses = _ipv4_addresses(address, sockaddr_type, af_inet)
+    return addresses[0] if addresses else None
+
+
+def _ipv4_addresses(address, sockaddr_type, af_inet: int) -> list[str]:
+    addresses: list[str] = []
     current = address
     while current:
         socket_address = current.contents.Address
         if socket_address.lpSockaddr:
             sockaddr = ctypes_cast(socket_address.lpSockaddr, sockaddr_type)
             if int(sockaddr.sin_family) == af_inet:
-                return socket.inet_ntoa(bytes(sockaddr.sin_addr))
+                addresses.append(socket.inet_ntoa(bytes(sockaddr.sin_addr)))
+        current = current.contents.Next
+    return addresses
+
+
+def _socket_ipv4_addresses(address, sockaddr_type, af_inet: int) -> list[str]:
+    return _ipv4_addresses(address, sockaddr_type, af_inet)
+
+
+def _first_ipv4_prefix_length(address, sockaddr_type, af_inet: int) -> int | None:
+    current = address
+    while current:
+        socket_address = current.contents.Address
+        if socket_address.lpSockaddr:
+            sockaddr = ctypes_cast(socket_address.lpSockaddr, sockaddr_type)
+            if int(sockaddr.sin_family) == af_inet:
+                return int(getattr(current.contents, "OnLinkPrefixLength", 0))
         current = current.contents.Next
     return None
 

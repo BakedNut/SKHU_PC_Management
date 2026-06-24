@@ -8,6 +8,7 @@ from skhu_pc_management.application.use_cases.apply_static_ip import ApplyStatic
 from skhu_pc_management.application.use_cases.list_network_adapters import ListNetworkAdapters
 from skhu_pc_management.application.use_cases.set_dhcp import SetDhcp
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult, StaticIpConfig
+from skhu_pc_management.infrastructure.windows import netsh_network_configurator
 from skhu_pc_management.infrastructure.windows.netsh_network_configurator import NetshNetworkConfigurator
 from skhu_pc_management.infrastructure.windows.netsh_network_configurator import (
     _POWERSHELL_DETAILED_ADAPTER_SCRIPT,
@@ -92,6 +93,11 @@ POWERSHELL_DETAILED_ADAPTER_COMMAND = (
     "-Command",
     _POWERSHELL_DETAILED_ADAPTER_SCRIPT,
 )
+
+
+@pytest.fixture(autouse=True)
+def disable_network_adapter_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(netsh_network_configurator, "read_network_adapters_fast", lambda: [])
 
 
 def test_valid_static_ip_config_can_be_created() -> None:
@@ -479,6 +485,87 @@ def test_network_configurator_reads_detailed_powershell_json() -> None:
     assert adapters[0].gateway == "192.168.10.1"
     assert adapters[0].dns_servers == ("8.8.8.8", "1.1.1.1")
     assert adapters[0].is_dhcp_enabled is False
+
+
+def test_network_configurator_uses_fast_path_without_powershell(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        netsh_network_configurator,
+        "read_network_adapters_fast",
+        lambda: [
+            NetworkAdapterInfo(
+                name="Ethernet",
+                description="Intel Ethernet",
+                is_enabled=True,
+                mac_address="00-11-22-33-44-55",
+                ip_addresses=("192.168.0.10",),
+                subnet_mask="255.255.255.0",
+                gateway="192.168.0.1",
+                is_dhcp_enabled=None,
+            )
+        ],
+    )
+    command_runner = FakeCommandRunner({POWERSHELL_DETAILED_ADAPTER_COMMAND: "[]"})
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert [adapter.name for adapter in adapters] == ["Ethernet"]
+    assert adapters[0].is_dhcp_enabled is None
+    assert command_runner.commands == []
+
+
+def test_network_configurator_uses_powershell_when_fast_path_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(netsh_network_configurator, "read_network_adapters_fast", lambda: [])
+    command_runner = FakeCommandRunner(
+        {
+            POWERSHELL_DETAILED_ADAPTER_COMMAND: """
+{
+  "Name": "Ethernet",
+  "InterfaceDescription": "Intel Ethernet",
+  "Status": "Up",
+  "MacAddress": "00-11-22-33-44-55",
+  "IPv4Addresses": ["192.168.0.10"],
+  "IPv4PrefixLength": [24],
+  "IPv4DefaultGateway": ["192.168.0.1"],
+  "DnsServers": [],
+  "Dhcp": "Enabled"
+}
+"""
+        }
+    )
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert adapters[0].name == "Ethernet"
+    assert command_runner.commands[0] == POWERSHELL_DETAILED_ADAPTER_COMMAND
+
+
+def test_network_configurator_uses_powershell_when_fast_path_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_fast_path() -> list[NetworkAdapterInfo]:
+        raise OSError("GetAdaptersAddresses failed")
+
+    monkeypatch.setattr(netsh_network_configurator, "read_network_adapters_fast", fail_fast_path)
+    command_runner = FakeCommandRunner(
+        {
+            POWERSHELL_DETAILED_ADAPTER_COMMAND: """
+{
+  "Name": "Wi-Fi",
+  "InterfaceDescription": "Intel Wi-Fi",
+  "Status": "Up",
+  "MacAddress": "00-11-22-33-44-55",
+  "IPv4Addresses": ["192.168.0.20"],
+  "IPv4PrefixLength": [24],
+  "IPv4DefaultGateway": ["192.168.0.1"],
+  "DnsServers": [],
+  "Dhcp": null
+}
+"""
+        }
+    )
+
+    adapters = NetshNetworkConfigurator(command_runner).list_adapters()
+
+    assert adapters[0].name == "Wi-Fi"
+    assert command_runner.commands[0] == POWERSHELL_DETAILED_ADAPTER_COMMAND
 
 
 def test_parse_boolish_handles_windows_and_common_tokens() -> None:
