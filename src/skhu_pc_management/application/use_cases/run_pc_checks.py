@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -24,22 +25,39 @@ class RunPcChecks:
     checks: Iterable[CheckProvider]
 
     def execute(self) -> list[CheckResult]:
-        results: list[CheckResult] = []
-        for check in self.checks:
-            try:
-                results.append(check.run())
-            except Exception as exc:
-                label = check.__class__.__name__
-                results.append(
-                    CheckResult(
-                        check_id=label,
-                        label=label,
-                        category=CheckCategory.PROGRAM,
-                        status=CheckStatus.ERROR,
-                        message=f"점검 실행 중 오류가 발생했습니다: {exc}",
-                    )
-                )
-        return results
+        checks = list(self.checks)
+        if not checks:
+            return []
+
+        results: list[CheckResult | None] = [None] * len(checks)
+        max_workers = min(8, len(checks))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {
+                executor.submit(self._run_one_check, check): index for index, check in enumerate(checks)
+            }
+            for future in as_completed(future_to_index):
+                results[future_to_index[future]] = future.result()
+
+        collected_results: list[CheckResult] = []
+        for result in results:
+            if result is None:
+                raise RuntimeError("PC check result was not collected.")
+            collected_results.append(result)
+        return collected_results
+
+    @staticmethod
+    def _run_one_check(check: CheckProvider) -> CheckResult:
+        try:
+            return check.run()
+        except Exception as exc:
+            label = check.__class__.__name__
+            return CheckResult(
+                check_id=label,
+                label=label,
+                category=CheckCategory.PROGRAM,
+                status=CheckStatus.ERROR,
+                message=f"점검 실행 중 오류가 발생했습니다: {exc}",
+            )
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -178,6 +179,22 @@ class ExplodingCheck:
         raise RuntimeError("check failed")
 
 
+class BarrierCheck:
+    def __init__(self, check_id: str, barrier: threading.Barrier) -> None:
+        self.check_id = check_id
+        self.barrier = barrier
+
+    def run(self) -> CheckResult:
+        self.barrier.wait(timeout=3)
+        return CheckResult(
+            check_id=self.check_id,
+            label=self.check_id,
+            category=CheckCategory.PROGRAM,
+            status=CheckStatus.OK,
+            message="ok",
+        )
+
+
 def test_run_pc_checks_returns_results_from_multiple_checks() -> None:
     program_reader = FakeInstalledProgramReader()
     program_reader.programs["chrome"] = InstalledProgramInfo("chrome", "Google Chrome", "1.2.3")
@@ -209,6 +226,19 @@ def test_run_pc_checks_keeps_running_when_one_check_fails() -> None:
     assert results[0].status == CheckStatus.ERROR
     assert results[0].message == "점검 실행 중 오류가 발생했습니다: check failed"
     assert results[1].status == CheckStatus.OK
+
+
+def test_run_pc_checks_executes_checks_in_parallel() -> None:
+    barrier = threading.Barrier(2)
+    checks = [
+        BarrierCheck("first", barrier),
+        BarrierCheck("second", barrier),
+    ]
+
+    results = RunPcChecks(checks).execute()
+
+    assert [result.check_id for result in results] == ["first", "second"]
+    assert [result.status for result in results] == [CheckStatus.OK, CheckStatus.OK]
 
 
 def test_installed_program_check_reports_missing_as_warning() -> None:
