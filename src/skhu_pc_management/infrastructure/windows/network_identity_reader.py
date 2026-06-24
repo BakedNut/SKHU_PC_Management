@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import socket
 
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo
@@ -10,6 +11,12 @@ from skhu_pc_management.domain.pc.models import PcNetworkInfo
 IF_TYPE_ETHERNET_CSMACD = 6
 IF_TYPE_IEEE80211 = 71
 IF_TYPE_SOFTWARE_LOOPBACK = 24
+GAA_FLAG_SKIP_ANYCAST = 0x0002
+GAA_FLAG_SKIP_MULTICAST = 0x0004
+GAA_FLAG_SKIP_DNS_SERVER = 0x0008
+GAA_FLAG_INCLUDE_PREFIX = 0x0010
+GAA_FLAG_INCLUDE_GATEWAYS = 0x0080
+GAA_FLAGS = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,15 @@ class NetworkIdentityCandidate:
     prefix_length: int | None = None
 
 
+@dataclass(frozen=True)
+class _TcpipInterfaceConfig:
+    is_dhcp_enabled: bool | None = None
+    ip_addresses: tuple[str, ...] = ()
+    gateway: str | None = None
+    subnet_mask: str | None = None
+    dns_servers: tuple[str, ...] = ()
+
+
 def read_network_identity() -> tuple[str, str] | None:
     try:
         candidates = _get_adapters_addresses_candidates()
@@ -46,12 +62,13 @@ def read_active_network_info() -> PcNetworkInfo | None:
     selected = select_network_identity_candidate(candidates)
     if selected is None:
         return None
+    display_name = _candidate_display_name(selected)
     return PcNetworkInfo(
-        adapter_name=selected.adapter_name or selected.friendly_name,
+        adapter_name=display_name,
         adapter_type=_candidate_adapter_type(selected),
         ip_address=selected.ip,
         mac_address=normalize_mac_address(selected.mac) or selected.mac or None,
-        description=selected.description or selected.friendly_name,
+        description=selected.description or selected.friendly_name or display_name,
     )
 
 
@@ -66,8 +83,8 @@ def read_network_adapters_fast() -> list[NetworkAdapterInfo]:
     return sorted(
         adapters,
         key=lambda adapter: (
-            0 if _adapter_type_from_name(adapter.name, adapter.description) == "Ethernet" else 1,
             not adapter.is_enabled,
+            0 if _adapter_type_from_name(adapter.name, adapter.description) == "Ethernet" else 1,
             not bool(adapter.gateway),
             _adapter_metric(adapter, candidates),
             adapter.name.lower(),
@@ -141,8 +158,6 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
     AF_UNSPEC = 0
     AF_INET = 2
     NO_ERROR = 0
-    GAA_FLAGS = 0x0002 | 0x0004
-
     class SOCKET_ADDRESS(ctypes.Structure):
         _fields_ = (("lpSockaddr", ctypes.c_void_p), ("iSockaddrLength", ctypes.c_int))
 
@@ -284,6 +299,19 @@ def _candidate_adapter_type(candidate: NetworkIdentityCandidate) -> str:
     return _adapter_type_from_if_type(candidate.if_type)
 
 
+def _candidate_display_name(candidate: NetworkIdentityCandidate) -> str:
+    if candidate.friendly_name:
+        return candidate.friendly_name
+    if candidate.description:
+        return candidate.description
+    adapter_type = _candidate_adapter_type(candidate)
+    if adapter_type != "Unknown":
+        return adapter_type
+    if candidate.adapter_name:
+        return candidate.adapter_name
+    return "Unknown"
+
+
 def _adapter_type_from_if_type(if_type: int) -> str:
     if if_type == IF_TYPE_ETHERNET_CSMACD:
         return "Ethernet"
@@ -293,16 +321,18 @@ def _adapter_type_from_if_type(if_type: int) -> str:
 
 
 def _network_adapter_info_from_candidate(candidate: NetworkIdentityCandidate) -> NetworkAdapterInfo:
+    registry_config = _read_tcpip_interface_config(candidate.adapter_name)
+    subnet_mask = _prefix_length_to_subnet_mask(candidate.prefix_length) if candidate.prefix_length is not None else None
     return NetworkAdapterInfo(
         name=candidate.friendly_name or candidate.adapter_name or candidate.description or "Unknown",
         description=candidate.description or candidate.friendly_name,
         is_enabled=candidate.oper_status_up,
         mac_address=normalize_mac_address(candidate.mac) or candidate.mac or None,
-        ip_addresses=candidate.ip_addresses or ((candidate.ip,) if candidate.ip else ()),
-        subnet_mask=_prefix_length_to_subnet_mask(candidate.prefix_length) if candidate.prefix_length is not None else None,
-        gateway=candidate.gateway,
-        dns_servers=candidate.dns_servers,
-        is_dhcp_enabled=None,
+        ip_addresses=candidate.ip_addresses or registry_config.ip_addresses or ((candidate.ip,) if candidate.ip else ()),
+        subnet_mask=subnet_mask or registry_config.subnet_mask,
+        gateway=candidate.gateway or registry_config.gateway,
+        dns_servers=candidate.dns_servers or registry_config.dns_servers,
+        is_dhcp_enabled=registry_config.is_dhcp_enabled,
     )
 
 
@@ -325,6 +355,164 @@ def _prefix_length_to_subnet_mask(prefix_length: int) -> str | None:
         return None
     mask = (0xFFFFFFFF << (32 - prefix_length)) & 0xFFFFFFFF
     return ".".join(str((mask >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+
+def _read_tcpip_interface_config(adapter_name: str) -> _TcpipInterfaceConfig:
+    adapter_guid = _extract_adapter_guid(adapter_name)
+    if adapter_guid is None:
+        return _TcpipInterfaceConfig()
+
+    try:
+        import winreg
+
+        path = rf"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{adapter_guid}"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+            values = {
+                name: _read_registry_value(winreg, key, name)
+                for name in (
+                    "EnableDHCP",
+                    "DhcpIPAddress",
+                    "IPAddress",
+                    "DhcpDefaultGateway",
+                    "DefaultGateway",
+                    "DhcpNameServer",
+                    "NameServer",
+                    "DhcpSubnetMask",
+                    "SubnetMask",
+                )
+            }
+    except Exception:
+        return _TcpipInterfaceConfig()
+
+    is_dhcp_enabled = _registry_dhcp_enabled(values.get("EnableDHCP"))
+    return _TcpipInterfaceConfig(
+        is_dhcp_enabled=is_dhcp_enabled,
+        ip_addresses=_select_registry_ipv4_tuple(
+            is_dhcp_enabled,
+            dhcp_value=values.get("DhcpIPAddress"),
+            static_value=values.get("IPAddress"),
+        ),
+        gateway=_select_registry_ipv4(
+            is_dhcp_enabled,
+            dhcp_value=values.get("DhcpDefaultGateway"),
+            static_value=values.get("DefaultGateway"),
+        ),
+        subnet_mask=_select_registry_ipv4(
+            is_dhcp_enabled,
+            dhcp_value=values.get("DhcpSubnetMask"),
+            static_value=values.get("SubnetMask"),
+        ),
+        dns_servers=_select_registry_dns_servers(
+            is_dhcp_enabled,
+            dhcp_value=values.get("DhcpNameServer"),
+            static_value=values.get("NameServer"),
+        ),
+    )
+
+
+def _read_registry_value(winreg_module: object, key: object, name: str) -> object | None:
+    try:
+        value, _ = winreg_module.QueryValueEx(key, name)
+        return value
+    except Exception:
+        return None
+
+
+def _extract_adapter_guid(adapter_name: str) -> str | None:
+    text = (adapter_name or "").strip()
+    if not text:
+        return None
+    match = re.search(
+        r"\{?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}?",
+        text,
+    )
+    if match is None:
+        return None
+    return "{" + match.group(1).upper() + "}"
+
+
+def _registry_dhcp_enabled(value: object) -> bool | None:
+    try:
+        number = int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    if number == 1:
+        return True
+    if number == 0:
+        return False
+    return None
+
+
+def _select_registry_ipv4(
+    is_dhcp_enabled: bool | None,
+    *,
+    dhcp_value: object,
+    static_value: object,
+) -> str | None:
+    values = (dhcp_value, static_value) if is_dhcp_enabled is not False else (static_value, dhcp_value)
+    for value in values:
+        ip_address = _first_ipv4_from_registry_value(value)
+        if ip_address:
+            return ip_address
+    return None
+
+
+def _select_registry_ipv4_tuple(
+    is_dhcp_enabled: bool | None,
+    *,
+    dhcp_value: object,
+    static_value: object,
+) -> tuple[str, ...]:
+    values = (dhcp_value, static_value) if is_dhcp_enabled is not False else (static_value, dhcp_value)
+    for value in values:
+        ip_addresses = _ipv4_tuple_from_registry_value(value)
+        if ip_addresses:
+            return ip_addresses
+    return ()
+
+
+def _select_registry_dns_servers(
+    is_dhcp_enabled: bool | None,
+    *,
+    dhcp_value: object,
+    static_value: object,
+) -> tuple[str, ...]:
+    values = (static_value, dhcp_value) if is_dhcp_enabled is not True else (dhcp_value, static_value)
+    for value in values:
+        ip_addresses = _ipv4_tuple_from_registry_value(value)
+        if ip_addresses:
+            return ip_addresses
+    return ()
+
+
+def _first_ipv4_from_registry_value(value: object) -> str | None:
+    values = _ipv4_tuple_from_registry_value(value)
+    return values[0] if values else None
+
+
+def _ipv4_tuple_from_registry_value(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    raw_values = value if isinstance(value, (list, tuple)) else re.split(r"[\s,;]+", str(value))
+    ip_addresses: list[str] = []
+    for raw_value in raw_values:
+        for candidate in re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", str(raw_value)):
+            if _is_valid_registry_ipv4(candidate) and candidate not in ip_addresses:
+                ip_addresses.append(candidate)
+    return tuple(ip_addresses)
+
+
+def _is_valid_registry_ipv4(value: str) -> bool:
+    parts = value.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        numbers = [int(part) for part in parts]
+    except ValueError:
+        return False
+    if not all(0 <= number <= 255 for number in numbers):
+        return False
+    return value not in {"0.0.0.0", "255.255.255.255"}
 
 
 def _first_ipv4_address(address, sockaddr_type, af_inet: int) -> str | None:

@@ -20,6 +20,9 @@ from skhu_pc_management.infrastructure.windows.network_identity_reader import (
     IF_TYPE_ETHERNET_CSMACD,
     IF_TYPE_IEEE80211,
     NetworkIdentityCandidate,
+    _extract_adapter_guid,
+    _first_ipv4_from_registry_value,
+    _ipv4_tuple_from_registry_value,
     normalize_mac_address,
     read_network_adapters_fast,
     select_network_identity_candidate,
@@ -896,6 +899,88 @@ def test_pc_info_network_selection_uses_low_level_info_without_powershell(monkey
     assert command_runner.commands == []
 
 
+def test_read_active_network_info_prefers_friendly_name_over_raw_adapter_guid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate(
+                "192.168.0.10",
+                "00:11:22:33:44:10",
+                "이더넷",
+                IF_TYPE_ETHERNET_CSMACD,
+                True,
+                True,
+                adapter_name="{A3452B1D-8B3A-4EF6-A936-5F147DBE811D}",
+                description="Realtek Gaming 2.5GbE Family Controller",
+                gateway="192.168.0.1",
+            )
+        ],
+    )
+
+    network_info = network_identity_reader.read_active_network_info()
+
+    assert network_info is not None
+    assert network_info.adapter_name == "이더넷"
+    assert network_info.description == "Realtek Gaming 2.5GbE Family Controller"
+
+
+def test_read_active_network_info_uses_description_when_friendly_name_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate(
+                "192.168.0.10",
+                "00:11:22:33:44:10",
+                "",
+                IF_TYPE_ETHERNET_CSMACD,
+                True,
+                True,
+                adapter_name=r"\DEVICE\TCPIP_{A3452B1D-8B3A-4EF6-A936-5F147DBE811D}",
+                description="Realtek Gaming 2.5GbE Family Controller",
+                gateway="192.168.0.1",
+            )
+        ],
+    )
+
+    network_info = network_identity_reader.read_active_network_info()
+
+    assert network_info is not None
+    assert network_info.adapter_name == "Realtek Gaming 2.5GbE Family Controller"
+
+
+def test_read_active_network_info_uses_adapter_type_before_raw_guid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate(
+                "192.168.0.10",
+                "00:11:22:33:44:10",
+                "",
+                IF_TYPE_ETHERNET_CSMACD,
+                True,
+                True,
+                adapter_name="{A3452B1D-8B3A-4EF6-A936-5F147DBE811D}",
+                gateway="192.168.0.1",
+            )
+        ],
+    )
+
+    network_info = network_identity_reader.read_active_network_info()
+
+    assert network_info is not None
+    assert network_info.adapter_name == "Ethernet"
+    assert network_info.description == "Ethernet"
+
+
 def test_pc_info_network_selection_falls_back_to_wmi_when_powershell_fails() -> None:
     command_runner = FakeCommandRunner("not json")
     reader = ControlledWmiPcInfoReader(
@@ -1022,19 +1107,178 @@ def test_get_adapters_addresses_fast_adapter_list_filters_and_sorts(monkeypatch:
         network_identity_reader,
         "_get_adapters_addresses_candidates",
         lambda: [
-            NetworkIdentityCandidate("192.168.0.30", "00:11:22:33:44:30", "Wi-Fi", IF_TYPE_IEEE80211, True, True, 5),
+            NetworkIdentityCandidate(
+                "192.168.0.30",
+                "00:11:22:33:44:30",
+                "Wi-Fi",
+                IF_TYPE_IEEE80211,
+                True,
+                True,
+                5,
+                gateway="192.168.0.1",
+            ),
             NetworkIdentityCandidate("192.168.65.1", "00:11:22:33:44:65", "vEthernet Docker", IF_TYPE_ETHERNET_CSMACD, True, True, 1),
-            NetworkIdentityCandidate("192.168.0.10", "00:11:22:33:44:10", "Ethernet", IF_TYPE_ETHERNET_CSMACD, True, True, 25),
+            NetworkIdentityCandidate(
+                "192.168.0.10",
+                "00:11:22:33:44:10",
+                "Ethernet",
+                IF_TYPE_ETHERNET_CSMACD,
+                True,
+                True,
+                25,
+                gateway="192.168.0.1",
+            ),
             NetworkIdentityCandidate("192.168.0.11", "00:11:22:33:44:11", "Ethernet 2", IF_TYPE_ETHERNET_CSMACD, False, False, 1),
         ],
     )
 
     adapters = read_network_adapters_fast()
 
-    assert [adapter.name for adapter in adapters] == ["Ethernet", "Ethernet 2", "Wi-Fi"]
+    assert [adapter.name for adapter in adapters] == ["Ethernet", "Wi-Fi", "Ethernet 2"]
     assert adapters[0].is_enabled is True
-    assert adapters[0].gateway is None
+    assert adapters[0].gateway == "192.168.0.1"
     assert adapters[0].is_dhcp_enabled is None
+
+
+def test_get_adapters_addresses_flags_include_gateway_and_dns() -> None:
+    assert network_identity_reader.GAA_FLAGS & network_identity_reader.GAA_FLAG_INCLUDE_GATEWAYS
+    assert network_identity_reader.GAA_FLAGS & network_identity_reader.GAA_FLAG_INCLUDE_PREFIX
+    assert not network_identity_reader.GAA_FLAGS & network_identity_reader.GAA_FLAG_SKIP_DNS_SERVER
+
+
+def test_network_adapter_fast_path_uses_candidate_gateway_without_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate(
+                "192.168.0.10",
+                "00:11:22:33:44:10",
+                "Ethernet",
+                IF_TYPE_ETHERNET_CSMACD,
+                True,
+                True,
+                adapter_name="{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+                ip_addresses=("192.168.0.10",),
+                gateway="192.168.0.1",
+                dns_servers=("8.8.8.8",),
+                prefix_length=24,
+            )
+        ],
+    )
+    monkeypatch.setattr(network_identity_reader, "_read_tcpip_interface_config", lambda adapter_name: network_identity_reader._TcpipInterfaceConfig())
+
+    adapter = read_network_adapters_fast()[0]
+
+    assert adapter.gateway == "192.168.0.1"
+    assert adapter.subnet_mask == "255.255.255.0"
+    assert adapter.dns_servers == ("8.8.8.8",)
+    assert adapter.is_dhcp_enabled is None
+
+
+def test_network_adapter_fast_path_enriches_dhcp_registry_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate(
+                "192.168.0.10",
+                "00:11:22:33:44:10",
+                "Ethernet",
+                IF_TYPE_ETHERNET_CSMACD,
+                True,
+                False,
+                adapter_name=r"\DEVICE\TCPIP_{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+                ip_addresses=("192.168.0.10",),
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_read_tcpip_interface_config",
+        lambda adapter_name: network_identity_reader._TcpipInterfaceConfig(
+            is_dhcp_enabled=True,
+            gateway="192.168.0.1",
+            subnet_mask="255.255.255.0",
+            dns_servers=("8.8.8.8", "1.1.1.1"),
+        ),
+    )
+
+    adapter = read_network_adapters_fast()[0]
+
+    assert adapter.gateway == "192.168.0.1"
+    assert adapter.subnet_mask == "255.255.255.0"
+    assert adapter.dns_servers == ("8.8.8.8", "1.1.1.1")
+    assert adapter.is_dhcp_enabled is True
+
+
+def test_network_adapter_fast_path_enriches_static_registry_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate(
+                "192.168.0.20",
+                "00:11:22:33:44:20",
+                "Ethernet",
+                IF_TYPE_ETHERNET_CSMACD,
+                True,
+                False,
+                adapter_name="{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_read_tcpip_interface_config",
+        lambda adapter_name: network_identity_reader._TcpipInterfaceConfig(
+            is_dhcp_enabled=False,
+            ip_addresses=("192.168.0.20",),
+            gateway="192.168.0.1",
+            subnet_mask="255.255.255.0",
+            dns_servers=("203.246.75.1",),
+        ),
+    )
+
+    adapter = read_network_adapters_fast()[0]
+
+    assert adapter.ip_addresses == ("192.168.0.20",)
+    assert adapter.gateway == "192.168.0.1"
+    assert adapter.subnet_mask == "255.255.255.0"
+    assert adapter.dns_servers == ("203.246.75.1",)
+    assert adapter.is_dhcp_enabled is False
+
+
+def test_network_adapter_fast_path_does_not_fail_when_enrichment_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        network_identity_reader,
+        "_get_adapters_addresses_candidates",
+        lambda: [
+            NetworkIdentityCandidate(
+                "192.168.0.30",
+                "00:11:22:33:44:30",
+                "Wi-Fi",
+                IF_TYPE_IEEE80211,
+                True,
+                False,
+                adapter_name="not-a-guid",
+                ip_addresses=("192.168.0.30",),
+            )
+        ],
+    )
+
+    adapter = read_network_adapters_fast()[0]
+
+    assert adapter.name == "Wi-Fi"
+    assert adapter.gateway is None
+    assert adapter.is_dhcp_enabled is None
+
+
+def test_registry_adapter_guid_and_ipv4_helpers() -> None:
+    assert _extract_adapter_guid(r"\DEVICE\TCPIP_{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}") == "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}"
+    assert _extract_adapter_guid("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") == "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}"
+    assert _first_ipv4_from_registry_value(["", "0.0.0.0", "192.168.0.1"]) == "192.168.0.1"
+    assert _ipv4_tuple_from_registry_value("8.8.8.8, 1.1.1.1; :: 0.0.0.0") == ("8.8.8.8", "1.1.1.1")
 
 
 def test_wmi_reader_uses_cpu_registry_fast_path_without_processor_wmi() -> None:

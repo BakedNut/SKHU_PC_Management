@@ -39,7 +39,7 @@ class FakeResourceResolver:
 
 
 class FakeCommandRunner:
-    def __init__(self, output: str | list[str]) -> None:
+    def __init__(self, output: str | list[str] = "") -> None:
         self.outputs = [output] if isinstance(output, str) else list(output)
         self.commands: list[tuple[str, ...]] = []
 
@@ -150,12 +150,12 @@ def test_taskbar_layout_status_provider_validates_google_chrome_target(monkeypat
     chrome_exe.write_text("chrome", encoding="utf-8")
     monkeypatch.setenv("APPDATA", str(appdata))
 
-    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources), FakeCommandRunner(str(chrome_exe))).check(
-        "set_taskbar_icons"
-    )
+    runner = FakeCommandRunner(str(chrome_exe))
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources), runner).check("set_taskbar_icons")
 
     assert status.is_configured is True
     assert status.status_text == "configured"
+    assert runner.commands == []
 
 
 def test_taskbar_layout_status_provider_warns_when_google_chrome_target_is_missing(monkeypatch, tmp_path) -> None:
@@ -169,13 +169,12 @@ def test_taskbar_layout_status_provider_warns_when_google_chrome_target_is_missi
     (target / "Google Chrome.lnk").write_text("shortcut", encoding="utf-8")
     monkeypatch.setenv("APPDATA", str(appdata))
 
-    status = TaskbarLayoutStatusProvider(
-        FakeResourceResolver(resources),
-        FakeCommandRunner(str(tmp_path / "missing" / "chrome.exe")),
-    ).check("set_taskbar_icons")
+    runner = FakeCommandRunner(str(tmp_path / "missing" / "chrome.exe"))
+    status = TaskbarLayoutStatusProvider(FakeResourceResolver(resources), runner).check("set_taskbar_icons")
 
-    assert status.is_configured is False
-    assert "Google Chrome.lnk 대상 없음" in status.detail
+    assert status.is_configured is True
+    assert "shortcut target 상세 확인은 기본 상태 확인에서 생략됩니다" in status.detail
+    assert runner.commands == []
 
 
 def test_taskbar_layout_status_provider_keeps_non_chrome_shortcut_names_exact(monkeypatch, tmp_path) -> None:
@@ -204,7 +203,7 @@ def test_password_expiration_status_provider_reports_general_remaining_user_as_d
   {"Name": "disabled", "Enabled": false, "PasswordNeverExpires": false}
 ]
 """
-    runner = FakeCommandRunner([user_output, "Maximum password age (days): Unlimited"])
+    runner = FakeCommandRunner("Maximum password age (days): Unlimited")
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 
@@ -212,8 +211,8 @@ def test_password_expiration_status_provider_reports_general_remaining_user_as_d
     assert status.is_applied is True
     assert status.severity == "ok"
     assert status.status_text == "configured"
-    assert "개별 플래그 미반영 사용자: AS" in status.detail
-    assert runner.commands[1] == ("net", "accounts")
+    assert "개별 사용자 플래그 상세 확인은 생략됨" in status.detail
+    assert runner.commands == [("net", "accounts")]
 
 
 def test_password_expiration_status_provider_excludes_builtin_guest_from_failure() -> None:
@@ -223,7 +222,7 @@ def test_password_expiration_status_provider_excludes_builtin_guest_from_failure
   {"Name": "Guest", "Enabled": true, "PasswordNeverExpires": false}
 ]
 """
-    runner = FakeCommandRunner([user_output, "Maximum password age (days): Unlimited"])
+    runner = FakeCommandRunner("Maximum password age (days): Unlimited")
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 
@@ -231,8 +230,7 @@ def test_password_expiration_status_provider_excludes_builtin_guest_from_failure
     assert status.is_applied is True
     assert status.severity == "ok"
     assert "최대 암호 사용 기간: 무제한" in status.detail
-    assert "개별 플래그 미반영 사용자: 없음" in status.detail
-    assert "제외된 내장 계정: Guest" in status.detail
+    assert "개별 사용자 플래그 상세 확인은 생략됨" in status.detail
 
 
 def test_password_expiration_status_provider_reports_configured_when_policy_and_users_match() -> None:
@@ -241,14 +239,14 @@ def test_password_expiration_status_provider_reports_configured_when_policy_and_
   {"Name": "student", "Enabled": "True", "PasswordNeverExpires": "True"}
 ]
 """
-    runner = FakeCommandRunner([user_output, "최대 암호 사용 기간(일): 무제한"])
+    runner = FakeCommandRunner("최대 암호 사용 기간(일): 무제한")
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 
     assert status.is_configured is True
     assert status.status_text == "configured"
     assert "최대 암호 사용 기간: 무제한" in status.detail
-    assert "개별 플래그 미반영 사용자: 없음" in status.detail
+    assert "개별 사용자 플래그 상세 확인은 생략됨" in status.detail
 
 
 def test_password_expiration_status_provider_warns_when_max_password_age_is_numeric() -> None:
@@ -257,13 +255,14 @@ def test_password_expiration_status_provider_warns_when_max_password_age_is_nume
   {"Name": "student", "Enabled": true, "PasswordNeverExpires": true}
 ]
 """
-    runner = FakeCommandRunner([user_output, "Maximum password age (days): 90"])
+    runner = FakeCommandRunner(["Maximum password age (days): 90", user_output])
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 
     assert status.is_configured is False
     assert status.severity == "warning"
     assert "최대 암호 사용 기간: 90일" in status.detail
+    assert runner.commands[1][0] == "powershell"
 
 
 def test_password_expiration_status_provider_reports_unknown_when_max_age_cannot_be_parsed() -> None:
@@ -272,7 +271,7 @@ def test_password_expiration_status_provider_reports_unknown_when_max_age_cannot
   {"Name": "student", "Enabled": true, "PasswordNeverExpires": true}
 ]
 """
-    runner = FakeCommandRunner([user_output, "The command completed successfully."])
+    runner = FakeCommandRunner(["The command completed successfully.", user_output])
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 
@@ -281,7 +280,7 @@ def test_password_expiration_status_provider_reports_unknown_when_max_age_cannot
 
 
 def test_password_expiration_status_provider_reports_unknown_when_enabled_users_are_empty() -> None:
-    runner = FakeCommandRunner(["[]", "Maximum password age (days): Unlimited"])
+    runner = FakeCommandRunner(["The command completed successfully.", "[]"])
 
     status = PasswordExpirationStatusProvider(runner).check("disable_password_expiration")
 

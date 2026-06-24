@@ -139,6 +139,19 @@ class FakeCommandRunner:
         return self.output
 
 
+class FakeSequenceCommandRunner:
+    def __init__(self, outputs: list[str]) -> None:
+        self.outputs = outputs
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(self, command: Sequence[str]) -> str:
+        command_tuple = tuple(command)
+        self.commands.append(command_tuple)
+        if not self.outputs:
+            raise AssertionError("unexpected command")
+        return self.outputs.pop(0)
+
+
 class FailingCommandRunner:
     def __init__(self, error: Exception) -> None:
         self.error = error
@@ -793,20 +806,26 @@ def test_parse_scheduled_task_json_handles_exists_false() -> None:
 
 
 def test_windows_scheduled_task_reader_returns_missing_task_without_error() -> None:
-    runner = FakeCommandRunner('{"Exists": false, "TaskName": "23시 자동 종료"}')
+    runner = FailingCommandRunner(RuntimeError("ERROR: The system cannot find the file specified."))
 
     task = WindowsScheduledTaskReader(runner).get_task("23시 자동 종료")
 
     assert task.exists is False
     assert task.error is None
+    assert runner.commands[0][:4] == ("schtasks", "/Query", "/TN", "23시 자동 종료")
 
 
 def test_windows_scheduled_task_reader_script_emits_exists_false_for_missing_task() -> None:
-    runner = FakeCommandRunner('{"Exists": false, "TaskName": "23시 자동 종료"}')
+    runner = FakeSequenceCommandRunner(
+        [
+            '"TaskName","Task To Run","Start Time","Status"\n"\\\\23시 자동 종료","N/A","","Ready"\n',
+            '{"Exists": false, "TaskName": "23시 자동 종료"}',
+        ]
+    )
 
     WindowsScheduledTaskReader(runner).get_task("23시 자동 종료")
 
-    script = _decode_encoded_powershell_command(runner.commands[0])
+    script = _decode_encoded_powershell_command(runner.commands[1])
     assert "Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue" in script
     assert "Exists = $false" in script
     assert "Exists = $true" in script
@@ -872,23 +891,33 @@ def test_browser_history_check_reports_missing_user_data_as_ok() -> None:
     assert result.message == "사용자 데이터 폴더를 찾지 못해 기록 없음으로 처리했습니다."
 
 
-def test_power_settings_reader_builds_powercfg_commands() -> None:
-    output = "Current AC Power Setting Index: 0x00000000"
+def test_power_settings_reader_reads_combined_powercfg_once() -> None:
+    output = """
+Power Setting GUID: VIDEOIDLE
+  Current AC Power Setting Index: 0x00000000
+Power Setting GUID: STANDBYIDLE
+  Current AC Power Setting Index: 0x00000000
+Power Setting GUID: HIBERNATEIDLE
+  Current AC Power Setting Index: 0x00000000
+"""
     command_runner = FakeCommandRunner(output)
     reader = WindowsPowerSettingsReader(command_runner)
 
     status = reader.read_status()
 
     assert status.is_never is True
-    assert command_runner.commands == [
-        ("powercfg", "/q", "SCHEME_CURRENT", "SUB_VIDEO", "VIDEOIDLE"),
-        ("powercfg", "/q", "SCHEME_CURRENT", "SUB_SLEEP", "STANDBYIDLE"),
-        ("powercfg", "/q", "SCHEME_CURRENT", "SUB_SLEEP", "HIBERNATEIDLE"),
-    ]
+    assert command_runner.commands == [("powercfg", "/q", "SCHEME_CURRENT")]
 
 
 def test_power_settings_reader_parses_korean_powercfg_prefix() -> None:
-    output = "현재 AC 전원 설정 색인: 0x00000258"
+    output = """
+전원 설정 GUID: VIDEOIDLE
+  현재 AC 전원 설정 색인: 0x00000258
+전원 설정 GUID: STANDBYIDLE
+  현재 AC 전원 설정 색인: 0x00000258
+전원 설정 GUID: HIBERNATEIDLE
+  현재 AC 전원 설정 색인: 0x00000258
+"""
     command_runner = FakeCommandRunner(output)
     reader = WindowsPowerSettingsReader(command_runner)
 
@@ -898,6 +927,32 @@ def test_power_settings_reader_parses_korean_powercfg_prefix() -> None:
     assert status.standby_timeout_ac == "0x00000258"
     assert status.hibernate_timeout_ac == "0x00000258"
     assert status.detail_text == "화면 끄기: 10분, 절전: 10분, 최대 절전: 10분"
+
+
+def test_power_settings_reader_falls_back_to_individual_powercfg_queries() -> None:
+    class PowerCfgRunner:
+        def __init__(self) -> None:
+            self.commands: list[tuple[str, ...]] = []
+
+        def run(self, command: Sequence[str]) -> str:
+            command_tuple = tuple(command)
+            self.commands.append(command_tuple)
+            if command_tuple == ("powercfg", "/q", "SCHEME_CURRENT"):
+                return "no combined values"
+            return "Current AC Power Setting Index: 0x00000000"
+
+    command_runner = PowerCfgRunner()
+    reader = WindowsPowerSettingsReader(command_runner)
+
+    status = reader.read_status()
+
+    assert status.is_never is True
+    assert command_runner.commands == [
+        ("powercfg", "/q", "SCHEME_CURRENT"),
+        ("powercfg", "/q", "SCHEME_CURRENT", "SUB_VIDEO", "VIDEOIDLE"),
+        ("powercfg", "/q", "SCHEME_CURRENT", "SUB_SLEEP", "STANDBYIDLE"),
+        ("powercfg", "/q", "SCHEME_CURRENT", "SUB_SLEEP", "HIBERNATEIDLE"),
+    ]
 
 
 def test_power_settings_reader_returns_unknown_when_output_cannot_be_parsed() -> None:

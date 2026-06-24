@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import re
 import base64
+import csv
+import io
+import shlex
 from dataclasses import dataclass
 from typing import Any
 
 from skhu_pc_management.domain.checks.models import ScheduledTaskInfo
+from skhu_pc_management.infrastructure.profiling import EnvProfiler
 from skhu_pc_management.ports.command_runner import CommandRunner
 
 
@@ -15,6 +19,28 @@ class WindowsScheduledTaskReader:
     command_runner: CommandRunner
 
     def get_task(self, name: str) -> ScheduledTaskInfo:
+        with EnvProfiler("SKHU_PC_MANAGEMENT_PROFILE_TABS").step("scheduled_task.get_task"):
+            task = self._get_task_with_schtasks(name)
+            if task is not None:
+                return task
+            return self._get_task_with_powershell(name)
+
+    def _get_task_with_schtasks(self, name: str) -> ScheduledTaskInfo | None:
+        try:
+            output = self.command_runner.run(("schtasks", "/Query", "/TN", name, "/FO", "CSV", "/V"))
+        except Exception as exc:
+            if _looks_like_task_not_found_error(str(exc)):
+                return ScheduledTaskInfo(name=name, exists=False)
+            return None
+
+        task = parse_schtasks_csv(name, output)
+        if task is None:
+            return None
+        if task.exists and (not task.trigger_time or not task.executable):
+            return None
+        return task
+
+    def _get_task_with_powershell(self, name: str) -> ScheduledTaskInfo:
         escaped_name = _escape_powershell_single_quoted(name)
         script = f"""
 $ErrorActionPreference = 'Stop'
@@ -58,6 +84,31 @@ $trigger = $task.Triggers | Select-Object -First 1
             return ScheduledTaskInfo(name=name, exists=False, error=str(exc))
 
         return parse_scheduled_task_json(name, output)
+
+
+def parse_schtasks_csv(name: str, output: str) -> ScheduledTaskInfo | None:
+    if not output.strip():
+        return ScheduledTaskInfo(name=name, exists=False)
+    try:
+        rows = list(csv.DictReader(io.StringIO(output)))
+    except csv.Error:
+        return None
+    if not rows:
+        return ScheduledTaskInfo(name=name, exists=False)
+
+    row = rows[0]
+    task_name = _read_first_present(row, ("TaskName", "Task Name", "작업 이름")) or name
+    task_to_run = _read_first_present(row, ("Task To Run", "TaskToRun", "실행할 작업", "실행할 작업:"))
+    start_time = _read_first_present(row, ("Start Time", "StartTime", "시작 시간"))
+    executable, arguments = _split_task_to_run(task_to_run)
+    return ScheduledTaskInfo(
+        name=str(task_name).lstrip("\\") or name,
+        exists=True,
+        trigger_time=_parse_time(start_time),
+        executable=executable,
+        arguments=arguments,
+        raw=row,
+    )
 
 
 def parse_scheduled_task_json(name: str, output: str) -> ScheduledTaskInfo:
@@ -152,6 +203,9 @@ def _looks_like_task_not_found_error(message: str) -> bool:
             "지정된 작업",
             "찾을 수 없습니다",
             "개체를 찾을 수 없습니다",
+            "cannot find the file specified",
+            "system cannot find",
+            "지정된 파일을 찾을 수 없습니다",
         )
     )
 
@@ -166,8 +220,29 @@ def _parse_time(value: object) -> str | None:
     if not text:
         return None
 
-    match = re.search(r"(?P<hour>\d{1,2}):(?P<minute>\d{2})", text)
+    match = re.search(r"(?P<hour>\d{1,2}):(?P<minute>\d{2})(?::\d{2})?\s*(?P<period>AM|PM|오전|오후)?", text, re.IGNORECASE)
     if match is None:
         return None
 
-    return f"{int(match.group('hour')):02d}:{match.group('minute')}"
+    hour = int(match.group("hour"))
+    period = (match.group("period") or "").casefold()
+    if period in {"pm", "오후"} and hour < 12:
+        hour += 12
+    if period in {"am", "오전"} and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{match.group('minute')}"
+
+
+def _split_task_to_run(value: object) -> tuple[str | None, str | None]:
+    text = str(value or "").strip()
+    if not text or text.upper() in {"N/A", "사용 안 함"}:
+        return None, None
+    try:
+        parts = shlex.split(text, posix=False)
+    except ValueError:
+        parts = text.split()
+    if not parts:
+        return None, None
+    executable = parts[0].strip('"')
+    arguments = text[len(parts[0]) :].strip() or None
+    return executable or None, arguments
