@@ -1032,7 +1032,6 @@ class _FakeActivation:
         self.selected_office_version = "2021"
         self.status_message = ""
 
-
 class _FakeAgentReport:
     status_message = "전송 대기"
     last_result_message = ""

@@ -3,7 +3,7 @@ from __future__ import annotations
 from skhu_pc_management.domain.activation.models import ActivationResult
 from skhu_pc_management.domain.checks.models import CheckResult, CheckStatus
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, NetworkConfigResult
-from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo
+from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo, PcNetworkInfo
 from skhu_pc_management.domain.settings.models import ApplyResult, ApplySettingsResult, SettingStatus
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
@@ -32,6 +32,13 @@ class FakeLoadPcInfo:
             disks=[DiskInfo(model="Samsung NVMe", disk_type="SSD", bus_type="NVMe", display_type="SSD (NVMe)", rated_size="512GB")],
             ipv4_address="192.168.0.10",
             mac_address="AA-BB-CC-DD-EE-FF",
+            network_info=PcNetworkInfo(
+                adapter_name="이더넷",
+                adapter_type="Ethernet",
+                ip_address="192.168.0.10",
+                mac_address="AA-BB-CC-DD-EE-FF",
+                description="Realtek Gaming 2.5GbE Family Controller",
+            ),
             disk_nvme_summary="1개(512GB x1)",
         )
 
@@ -134,7 +141,21 @@ def test_pc_info_viewmodel_refresh_updates_rows() -> None:
     assert view_model.mac_address == "AA-BB-CC-DD-EE-FF"
     assert view_model.disk_nvme_summary == "1개(512GB x1)"
     assert ("GPU 메모리", "8GB") in view_model.rows
-    assert ("IPv4 주소", "192.168.0.10") in view_model.rows
+    assert ("네트워크 어댑터", "이더넷 (Ethernet)") in view_model.rows
+    assert ("IP 주소", "192.168.0.10") in view_model.rows
+    assert ("MAC 주소", "AA-BB-CC-DD-EE-FF") in view_model.rows
+
+
+def test_pc_info_viewmodel_opens_pc_name_settings() -> None:
+    open_settings = FakeOpenPcNameSettings()
+    view_model = PcInfoViewModel(FakeLoadPcInfo(), open_settings)
+
+    result = view_model.open_pc_name_settings()
+
+    assert result is not None
+    assert result.success is True
+    assert open_settings.calls == 1
+    assert view_model.status_message == "Windows 설정을 열었습니다."
 
 
 def test_pc_info_viewmodel_opens_pc_name_settings() -> None:

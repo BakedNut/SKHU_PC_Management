@@ -1,6 +1,6 @@
 from skhu_pc_management.domain.checks.models import CheckResult
 from skhu_pc_management.domain.network.models import NetworkAdapterInfo, StaticIpConfig
-from skhu_pc_management.domain.pc.models import DiskInfo, PcInfo
+from skhu_pc_management.domain.pc.models import DiskInfo, PcInfo, PcNetworkInfo
 from skhu_pc_management.domain.settings.definitions import RegistrySettingDefinition, SettingDefinition
 from skhu_pc_management.domain.settings.models import ApplyResult, SettingStatus
 
@@ -42,6 +42,8 @@ def test_domain_models_can_be_created() -> None:
     check = CheckResult(name="example", passed=True)
 
     assert pc_info.disks == [disk]
+    assert pc_info.network_info is None
+    assert PcNetworkInfo(adapter_name="Ethernet", adapter_type="Ethernet").adapter_name == "Ethernet"
     assert definition.expected_value == 1
     assert setting_definition.registry_values == (definition,)
     assert static_ip.adapter_name == "Ethernet"

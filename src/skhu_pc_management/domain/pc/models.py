@@ -36,6 +36,15 @@ class DiskInfo:
 
 
 @dataclass(frozen=True)
+class PcNetworkInfo:
+    adapter_name: str = "Unknown"
+    adapter_type: str = "Unknown"
+    ip_address: str | None = None
+    mac_address: str | None = None
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class PcInfo:
     computer_name: str
     user_name: str
@@ -55,6 +64,7 @@ class PcInfo:
     disks: list[DiskInfo] = field(default_factory=list)
     ipv4_address: str | None = None
     mac_address: str | None = None
+    network_info: PcNetworkInfo | None = None
     disk_nvme_summary: str = "없음"
     disk_ssd_summary: str = "없음"
     disk_hdd_summary: str = "없음"

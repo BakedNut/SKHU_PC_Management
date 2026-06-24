@@ -56,6 +56,7 @@ class PcInfoPanel(QWidget):
         self.ram = ReadOnlyField()
         self.gpu = ReadOnlyField()
         self.gpu_memory = ReadOnlyField()
+        self.network_adapter = ReadOnlyField()
         self.ipv4_address = ReadOnlyField()
         self.mac_address = ReadOnlyField()
         self.disk_nvme_summary = ReadOnlyField("없음")
@@ -175,7 +176,8 @@ class PcInfoPanel(QWidget):
     def _network_card(self) -> QWidget:
         card = Card("네트워크 정보")
         form = FormGrid(columns=1)
-        form.add_field("IPv4 주소", self.ipv4_address)
+        form.add_field("네트워크 어댑터", self.network_adapter)
+        form.add_field("IP 주소", self.ipv4_address)
         form.add_field("MAC 주소", self.mac_address)
         card.body_layout.addWidget(form)
         return card
@@ -242,6 +244,7 @@ class PcInfoPanel(QWidget):
         self.ram.setText(self._view_model.ram)
         self.gpu.setText(self._view_model.gpu)
         self.gpu_memory.setText(self._view_model.gpu_memory)
+        self.network_adapter.setText(getattr(self._view_model, "network_adapter", "알 수 없음"))
         self.ipv4_address.setText(self._view_model.ipv4_address)
         self.mac_address.setText(self._view_model.mac_address)
         self.disk_nvme_summary.setText(self._view_model.disk_nvme_summary)
@@ -265,6 +268,7 @@ class PcInfoPanel(QWidget):
             self.ram,
             self.gpu,
             self.gpu_memory,
+            self.network_adapter,
             self.ipv4_address,
             self.mac_address,
             self.disk_nvme_summary,

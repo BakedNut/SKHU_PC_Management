@@ -20,6 +20,7 @@ class PcInfoViewModel:
     gpu: str = "알 수 없음"
     gpu_memory: str = "알 수 없음"
     disks: list[tuple[str, str, str, str]] = field(default_factory=list)
+    network_adapter: str = "알 수 없음"
     ipv4_address: str = "알 수 없음"
     mac_address: str = "알 수 없음"
     disk_nvme_summary: str = "없음"
@@ -57,8 +58,9 @@ class PcInfoViewModel:
             )
             self.gpu_memory = _display_text(getattr(pc_info, "gpu_memory", None))
             self.disks = _disk_rows(pc_info.disks)
-            self.ipv4_address = _display_text(getattr(pc_info, "ipv4_address", None))
-            self.mac_address = _display_text(getattr(pc_info, "mac_address", None))
+            self.network_adapter = _format_network_adapter(pc_info)
+            self.ipv4_address = _format_network_ip(pc_info)
+            self.mac_address = _format_network_mac(pc_info)
             self.disk_nvme_summary = _display_text(getattr(pc_info, "disk_nvme_summary", None)) or "없음"
             self.disk_ssd_summary = _display_text(getattr(pc_info, "disk_ssd_summary", None)) or "없음"
             self.disk_hdd_summary = _display_text(getattr(pc_info, "disk_hdd_summary", None)) or "없음"
@@ -76,7 +78,8 @@ class PcInfoViewModel:
                 ("GPU", self.gpu),
                 ("GPU 메모리", self.gpu_memory),
                 ("디스크", _format_disks(pc_info.disks)),
-                ("IPv4 주소", self.ipv4_address),
+                ("네트워크 어댑터", self.network_adapter),
+                ("IP 주소", self.ipv4_address),
                 ("MAC 주소", self.mac_address),
                 ("TPM", self.tpm_status_text),
                 ("Secure Boot", self.secure_boot_status_text),
@@ -206,6 +209,33 @@ def _format_disks(disks: list[Any]) -> str:
         parts.append(_display_text(type_text))
         lines.append(" / ".join(parts))
     return "\n".join(lines)
+
+
+def _format_network_adapter(pc_info: Any) -> str:
+    network_info = getattr(pc_info, "network_info", None)
+    if network_info is None:
+        return "알 수 없음"
+    adapter_name = _clean_text(getattr(network_info, "adapter_name", None))
+    adapter_type = _clean_text(getattr(network_info, "adapter_type", None))
+    if not adapter_name and not adapter_type:
+        return "알 수 없음"
+    if adapter_name and adapter_type:
+        return f"{adapter_name} ({adapter_type})"
+    return adapter_name or adapter_type or "알 수 없음"
+
+
+def _format_network_ip(pc_info: Any) -> str:
+    network_info = getattr(pc_info, "network_info", None)
+    if network_info is not None:
+        return _display_text(getattr(network_info, "ip_address", None))
+    return _display_text(getattr(pc_info, "ipv4_address", None))
+
+
+def _format_network_mac(pc_info: Any) -> str:
+    network_info = getattr(pc_info, "network_info", None)
+    if network_info is not None:
+        return _display_text(getattr(network_info, "mac_address", None))
+    return _display_text(getattr(pc_info, "mac_address", None))
 
 
 def _disk_rows(disks: list[Any]) -> list[tuple[str, str, str, str]]:

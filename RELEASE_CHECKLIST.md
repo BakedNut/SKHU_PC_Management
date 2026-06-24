@@ -81,6 +81,11 @@ $env:SKHU_PC_MANAGEMENT_TEST_MODE = "1"
 - [ ] 일반 권한 실행 시 관리자 권한 경고가 앱을 중단하지 않는다.
 - [ ] PC 정보가 자동 로드된다.
 - [ ] PC 이름, 사용자, Windows 버전, CPU/RAM/GPU, 디스크, TPM, Secure Boot, Boot Mode가 표시된다.
+- [ ] PC 정보 탭의 네트워크 어댑터/IP 주소/MAC 주소가 현재 인터넷 연결 조건을 만족하는 물리 Ethernet 또는 Wi-Fi 기준으로 표시된다.
+- [ ] Ethernet과 Wi-Fi가 동시에 연결되어 있으면 PC 정보 탭에는 Ethernet의 IP/MAC이 표시된다.
+- [ ] Ethernet이 기본 게이트웨이 또는 유효한 IPv4 주소를 갖지 못하고 Wi-Fi만 조건을 만족하면 PC 정보 탭에는 Wi-Fi의 IP/MAC이 표시된다.
+- [ ] 가상 어댑터, VM/VPN, Docker/WSL, Bluetooth, Loopback/Tunnel 계열은 PC 정보 탭의 대표 IP/MAC으로 표시되지 않는다.
+- [ ] 조건을 만족하는 어댑터가 없으면 PC 정보 탭의 IP 주소와 MAC 주소가 `알 수 없음`으로 표시된다.
 - [ ] `PC 이름 변경`은 Windows 설정의 시스템 정보 화면을 연다.
 - [ ] `PC 이름 변경` 성공 시 완료 팝업 없이 Windows 설정 화면이 열린다.
 - [ ] `PC 이름 변경` 실패 시 경고 팝업이 표시된다.
@@ -131,6 +136,7 @@ $env:SKHU_PC_MANAGEMENT_TEST_MODE = "1"
 
 - [ ] 물리 Ethernet/Wi-Fi 어댑터가 표시된다.
 - [ ] 현재 네트워크 상태 표에 IP 할당 방식, IP, subnet, gateway, DNS가 표시된다.
+- [ ] PC 정보 탭의 대표 IP/MAC 필터링 변경으로 네트워크 탭의 어댑터 목록과 고정 IP/DHCP 설정 동작이 바뀌지 않았다.
 - [ ] `192.168.` 같은 불완전 IP는 적용 전에 한국어 validation으로 차단된다.
 - [ ] 고정 IP/DHCP 적용 후 어댑터 상태가 다시 로드된다.
 
