@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import socket
 
+from skhu_pc_management.domain.pc.models import PcNetworkInfo
+
 
 IF_TYPE_ETHERNET_CSMACD = 6
+IF_TYPE_IEEE80211 = 71
 IF_TYPE_SOFTWARE_LOOPBACK = 24
 
 
@@ -17,6 +20,9 @@ class NetworkIdentityCandidate:
     oper_status_up: bool
     has_gateway: bool
     metric: int | None = None
+    description: str = ""
+    adapter_name: str = ""
+    adapter_type: str = ""
 
 
 def read_network_identity() -> tuple[str, str] | None:
@@ -30,23 +36,39 @@ def read_network_identity() -> tuple[str, str] | None:
     return selected.ip, normalize_mac_address(selected.mac) or "알 수 없음"
 
 
+def read_active_network_info() -> PcNetworkInfo | None:
+    candidates = _get_adapters_addresses_candidates()
+    selected = select_network_identity_candidate(candidates)
+    if selected is None:
+        return None
+    return PcNetworkInfo(
+        adapter_name=selected.adapter_name or selected.friendly_name,
+        adapter_type=_candidate_adapter_type(selected),
+        ip_address=selected.ip,
+        mac_address=normalize_mac_address(selected.mac) or selected.mac or None,
+        description=selected.description or selected.friendly_name,
+    )
+
+
 def select_network_identity_candidate(candidates: list[NetworkIdentityCandidate]) -> NetworkIdentityCandidate | None:
     filtered = [
         candidate
         for candidate in candidates
         if candidate.oper_status_up
-        and candidate.if_type == IF_TYPE_ETHERNET_CSMACD
+        and candidate.if_type in {IF_TYPE_ETHERNET_CSMACD, IF_TYPE_IEEE80211}
         and candidate.if_type != IF_TYPE_SOFTWARE_LOOPBACK
         and candidate.ip
-        and not is_excluded_adapter_name(candidate.friendly_name)
+        and candidate.has_gateway
+        and not is_excluded_adapter_name(_candidate_name_text(candidate))
     ]
     if not filtered:
         return None
     return sorted(
         filtered,
         key=lambda candidate: (
-            not candidate.has_gateway,
+            0 if candidate.if_type == IF_TYPE_ETHERNET_CSMACD else 1,
             candidate.metric if candidate.metric not in (None, 0) else 2**31 - 1,
+            (candidate.adapter_name or candidate.friendly_name).lower(),
         ),
     )[0]
 
@@ -65,6 +87,9 @@ def is_excluded_adapter_name(name: str) -> bool:
             "vmware",
             "virtualbox",
             "loopback",
+            "bluetooth",
+            "docker",
+            "wsl",
             "tap-",
             "tap windows",
             "wireguard",
@@ -185,10 +210,35 @@ def _get_adapters_addresses_candidates() -> list[NetworkIdentityCandidate]:
                     oper_status_up=int(item.OperStatus) == 1,
                     has_gateway=bool(item.FirstGatewayAddress),
                     metric=int(item.Ipv4Metric),
+                    description=item.Description or "",
+                    adapter_name=(item.AdapterName or b"").decode(errors="ignore"),
+                    adapter_type=_adapter_type_from_if_type(int(item.IfType)),
                 )
             )
         adapter = item.Next
     return candidates
+
+
+def _candidate_name_text(candidate: NetworkIdentityCandidate) -> str:
+    return " ".join(
+        value
+        for value in (candidate.friendly_name, candidate.description, candidate.adapter_name)
+        if value
+    )
+
+
+def _candidate_adapter_type(candidate: NetworkIdentityCandidate) -> str:
+    if candidate.adapter_type:
+        return candidate.adapter_type
+    return _adapter_type_from_if_type(candidate.if_type)
+
+
+def _adapter_type_from_if_type(if_type: int) -> str:
+    if if_type == IF_TYPE_ETHERNET_CSMACD:
+        return "Ethernet"
+    if if_type == IF_TYPE_IEEE80211:
+        return "Wi-Fi"
+    return "Unknown"
 
 
 def _first_ipv4_address(address, sockaddr_type, af_inet: int) -> str | None:

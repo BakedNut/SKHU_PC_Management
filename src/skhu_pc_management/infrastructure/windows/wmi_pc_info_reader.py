@@ -1,17 +1,43 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 from dataclasses import dataclass
 import getpass
 import re
+import time
 from typing import Any
 
 from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo, PcNetworkInfo
 from skhu_pc_management.infrastructure.windows.dxgi_gpu_reader import read_dxgi_gpu_info
-from skhu_pc_management.infrastructure.windows.network_identity_reader import normalize_mac_address
+from skhu_pc_management.infrastructure.windows.network_identity_reader import normalize_mac_address, read_active_network_info
 from skhu_pc_management.ports.command_runner import CommandRunner
 from skhu_pc_management.ports.registry import Registry
+
+
+class _StartupProfiler:
+    def __init__(self) -> None:
+        self._enabled = os.environ.get("SKHU_PC_MANAGEMENT_PROFILE_STARTUP") == "1"
+
+    def step(self, name: str) -> "_StartupProfileStep":
+        return _StartupProfileStep(name, self._enabled)
+
+
+class _StartupProfileStep:
+    def __init__(self, name: str, enabled: bool) -> None:
+        self._name = name
+        self._enabled = enabled
+        self._started_at = 0.0
+
+    def __enter__(self) -> None:
+        if self._enabled:
+            self._started_at = time.perf_counter()
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if self._enabled:
+            elapsed_ms = (time.perf_counter() - self._started_at) * 1000
+            print(f"pc_info.{self._name}: {elapsed_ms:.1f} ms")
 
 
 @dataclass(frozen=True)
@@ -20,14 +46,26 @@ class WmiPcInfoReader:
     command_runner: CommandRunner | None = None
 
     def read(self) -> PcInfo:
-        os_info = self._get_windows_version_info()
-        memory_total_gb, memory_type, memory_speed_mhz, memory_modules = self._get_memory_info()
-        tpm_installed, tpm_version = self._get_tpm_info()
-        secure_boot_enabled, secure_boot_status = self._get_secure_boot_info()
-        gpu_name, gpu_memory, gpu_names = self._get_gpu_info()
-        disks = self._get_disks()
+        profiler = _StartupProfiler()
+        with profiler.step("os"):
+            os_info = self._get_windows_version_info()
+        with profiler.step("memory"):
+            memory_total_gb, memory_type, memory_speed_mhz, memory_modules = self._get_memory_info()
+        with profiler.step("tpm"):
+            tpm_installed, tpm_version = self._get_tpm_info()
+        with profiler.step("secure_boot"):
+            secure_boot_enabled, secure_boot_status = self._get_secure_boot_info()
+        with profiler.step("gpu"):
+            gpu_name, gpu_memory, gpu_names = self._get_gpu_info()
+        with profiler.step("disks"):
+            disks = self._get_disks()
         disk_summaries = _disk_type_summaries(disks)
-        network_info = self._get_active_network_info()
+        with profiler.step("network"):
+            network_info = self._get_active_network_info()
+        with profiler.step("cpu"):
+            cpu_name = self._get_cpu_name()
+        with profiler.step("boot_mode"):
+            boot_mode = self._get_boot_mode()
 
         return PcInfo(
             computer_name=self._get_computer_name(),
@@ -37,7 +75,7 @@ class WmiPcInfoReader:
             windows_ubr=os_info["ubr"],
             windows_architecture=os_info["architecture"],
             windows_release=os_info["release"],
-            cpu_name=self._get_first_wmi_value("Win32_Processor", "Name"),
+            cpu_name=cpu_name,
             memory_gb=memory_total_gb,
             memory_modules=memory_modules,
             memory_type=memory_type,
@@ -57,7 +95,7 @@ class WmiPcInfoReader:
             tpm_version=tpm_version,
             secure_boot_enabled=secure_boot_enabled,
             secure_boot_status=secure_boot_status,
-            boot_mode=self._get_boot_mode(),
+            boot_mode=boot_mode,
         )
 
     @staticmethod
@@ -75,6 +113,10 @@ class WmiPcInfoReader:
             return "Unknown"
 
     def _get_windows_version_info(self) -> dict[str, str | None]:
+        registry_info = self._get_windows_version_info_from_registry()
+        if registry_info is not None:
+            return registry_info
+
         os_item = self._first_wmi_item("Win32_OperatingSystem")
         raw_caption = _to_string(_get_value(os_item, "Caption"))
         caption = _normalize_os_caption(raw_caption)
@@ -87,6 +129,35 @@ class WmiPcInfoReader:
             "build": build,
             "ubr": ubr,
             "architecture": architecture,
+            "release": release,
+        }
+
+    def _get_windows_version_info_from_registry(self) -> dict[str, str | None] | None:
+        if self.registry is None:
+            return None
+
+        path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+        try:
+            product_name = _to_string(self.registry.read_value("HKEY_LOCAL_MACHINE", path, "ProductName"))
+            display_version = _to_string(self.registry.read_value("HKEY_LOCAL_MACHINE", path, "DisplayVersion"))
+            release_id = _to_string(self.registry.read_value("HKEY_LOCAL_MACHINE", path, "ReleaseId"))
+            current_build = _to_string(self.registry.read_value("HKEY_LOCAL_MACHINE", path, "CurrentBuildNumber"))
+            if current_build is None:
+                current_build = _to_string(self.registry.read_value("HKEY_LOCAL_MACHINE", path, "CurrentBuild"))
+            ubr = _to_string(self.registry.read_value("HKEY_LOCAL_MACHINE", path, "UBR"))
+        except Exception:
+            return None
+
+        caption = _normalize_os_caption(product_name)
+        if caption == "알 수 없음(운영체제 캡션 없음)" or current_build is None:
+            return None
+
+        release = display_version or release_id or _windows_release(product_name or caption, current_build)
+        return {
+            "caption": caption,
+            "build": current_build,
+            "ubr": ubr,
+            "architecture": _windows_architecture_from_process(),
             "release": release,
         }
 
@@ -107,6 +178,26 @@ class WmiPcInfoReader:
     def _get_first_wmi_value(self, wmi_class: str, property_name: str) -> str:
         value = _get_value(self._first_wmi_item(wmi_class), property_name)
         return _to_string(value) or "Unknown"
+
+    def _get_cpu_name(self) -> str:
+        registry_cpu_name = self._get_cpu_name_from_registry()
+        if registry_cpu_name:
+            return registry_cpu_name
+        return self._get_first_wmi_value("Win32_Processor", "Name")
+
+    def _get_cpu_name_from_registry(self) -> str | None:
+        if self.registry is None:
+            return None
+        try:
+            return _to_string(
+                self.registry.read_value(
+                    "HKEY_LOCAL_MACHINE",
+                    r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                    "ProcessorNameString",
+                )
+            )
+        except Exception:
+            return None
 
     def _get_memory_info(self) -> tuple[float | None, str, int | None, list[MemoryModuleInfo]]:
         modules: list[MemoryModuleInfo] = []
@@ -174,8 +265,9 @@ class WmiPcInfoReader:
         return None, None, gpu_names
 
     def _get_disks(self) -> list[DiskInfo]:
-        physical_disks = self._get_physical_disks()
-        disk_type_by_index = self._get_disk_type_by_index()
+        physical_rows = self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
+        physical_disks = self._build_physical_disk_metadata(physical_rows)
+        disk_type_by_index = self._get_disk_type_by_index(physical_rows)
         disks: list[DiskInfo] = []
         try:
             for item in self._wmi_items("Win32_DiskDrive"):
@@ -197,6 +289,10 @@ class WmiPcInfoReader:
         return disks
 
     def _get_active_network_info(self) -> PcNetworkInfo | None:
+        network_info = self._get_active_network_info_with_get_adapters_addresses()
+        if network_info is not None:
+            return network_info
+
         candidate = self._get_active_network_info_with_powershell()
         if candidate is None:
             candidate = self._get_active_network_info_with_wmi()
@@ -209,6 +305,12 @@ class WmiPcInfoReader:
             mac_address=normalize_mac_address(candidate.mac_address) or candidate.mac_address,
             description=candidate.description,
         )
+
+    def _get_active_network_info_with_get_adapters_addresses(self) -> PcNetworkInfo | None:
+        try:
+            return read_active_network_info()
+        except Exception:
+            return None
 
     def _get_active_network_info_with_powershell(self) -> "_NetworkCandidate | None":
         if self.command_runner is None:
@@ -249,8 +351,14 @@ class WmiPcInfoReader:
         return _infer_disk_type(disk, None)
 
     def _get_physical_disks(self) -> list["_PhysicalDiskMetadata"]:
+        return self._build_physical_disk_metadata(
+            self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
+        )
+
+    @staticmethod
+    def _build_physical_disk_metadata(physical_rows: list[Any]) -> list["_PhysicalDiskMetadata"]:
         disks: list[_PhysicalDiskMetadata] = []
-        for item in self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage"):
+        for item in physical_rows:
             disks.append(
                 _PhysicalDiskMetadata(
                     friendly_name=_to_string(_get_value(item, "FriendlyName")) or "",
@@ -262,10 +370,12 @@ class WmiPcInfoReader:
             )
         return disks
 
-    def _get_disk_type_by_index(self) -> dict[int, str]:
+    def _get_disk_type_by_index(self, physical_rows: list[Any] | None = None) -> dict[int, str]:
+        if physical_rows is None:
+            physical_rows = self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
         return _build_disk_type_by_index_from_storage_wmi(
             self._wmi_items("MSFT_Disk", r"root\Microsoft\Windows\Storage"),
-            self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage"),
+            physical_rows,
         )
 
     def _get_tpm_info(self) -> tuple[bool | None, str | None]:
@@ -934,6 +1044,17 @@ def _windows_release(caption: str, build_text: str | None) -> str | None:
         if build >= 19042:
             return "20H2"
 
+    return None
+
+
+def _windows_architecture_from_process() -> str | None:
+    architecture = os.environ.get("PROCESSOR_ARCHITECTURE", "")
+    wow64_architecture = os.environ.get("PROCESSOR_ARCHITEW6432", "")
+    text = f"{architecture} {wow64_architecture}".lower()
+    if "64" in text:
+        return "64-bit"
+    if "86" in text or "32" in text:
+        return "32-bit"
     return None
 
 

@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from skhu_pc_management.application.use_cases.load_pc_info import LoadPcInfo, LoadPcInfoUseCase
 from skhu_pc_management.domain.pc.models import DiskInfo, MemoryModuleInfo, PcInfo, PcNetworkInfo
 from skhu_pc_management.infrastructure.windows.dxgi_gpu_reader import (
@@ -16,6 +18,7 @@ from skhu_pc_management.infrastructure.windows.dxgi_gpu_reader import (
 )
 from skhu_pc_management.infrastructure.windows.network_identity_reader import (
     IF_TYPE_ETHERNET_CSMACD,
+    IF_TYPE_IEEE80211,
     NetworkIdentityCandidate,
     normalize_mac_address,
     select_network_identity_candidate,
@@ -129,8 +132,11 @@ class ControlledWmiPcInfoReader(WmiPcInfoReader):
     ) -> None:
         super().__init__(registry=registry, command_runner=command_runner)
         object.__setattr__(self, "wmi_items_by_class", wmi_items_by_class)
+        object.__setattr__(self, "wmi_call_counts", {})
 
     def _wmi_items(self, wmi_class: str, namespace: str | None = None) -> list[Any]:
+        key = (wmi_class, namespace)
+        self.wmi_call_counts[key] = self.wmi_call_counts.get(key, 0) + 1
         return self.wmi_items_by_class.get((wmi_class, namespace), [])
 
     def _read_dxgi_gpu_info(self) -> tuple[str, str, list[str]] | None:
@@ -138,6 +144,11 @@ class ControlledWmiPcInfoReader(WmiPcInfoReader):
 
     def _read_network_identity(self) -> tuple[str, str] | None:
         return None
+
+
+@pytest.fixture(autouse=True)
+def disable_low_level_network_info(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(wmi_pc_info_reader, "read_active_network_info", lambda: None)
 
 
 def test_load_pc_info_use_case_uses_reader_port() -> None:
@@ -381,6 +392,43 @@ def test_wmi_reader_ignores_windows_ubr_registry_read_failure() -> None:
 
     assert pc_info.windows_build == "26200"
     assert pc_info.windows_ubr is None
+
+
+def test_wmi_reader_uses_os_registry_fast_path_without_operating_system_wmi() -> None:
+    registry = FakeRegistry()
+    registry.set_value(
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "ProductName",
+        "Microsoft Windows 11 Pro",
+    )
+    registry.set_value(
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "DisplayVersion",
+        "24H2",
+    )
+    registry.set_value(
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "CurrentBuildNumber",
+        "26100",
+    )
+    registry.set_value(
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        "UBR",
+        3323,
+    )
+    reader = ControlledWmiPcInfoReader({}, registry=registry)
+
+    os_info = reader._get_windows_version_info()
+
+    assert os_info["caption"] == "Windows 11 Pro"
+    assert os_info["build"] == "26100"
+    assert os_info["release"] == "24H2"
+    assert os_info["ubr"] == "3323"
+    assert reader.wmi_call_counts.get(("Win32_OperatingSystem", None), 0) == 0
 
 
 def test_disk_info_can_be_built_from_win32_diskdrive_only() -> None:
@@ -806,6 +854,46 @@ def test_pc_info_network_selection_handles_single_powershell_json_object() -> No
     assert pc_info.network_info.mac_address == "00-11-22-33-44-55"
 
 
+def test_pc_info_network_selection_uses_low_level_info_without_powershell(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        wmi_pc_info_reader,
+        "read_active_network_info",
+        lambda: PcNetworkInfo(
+            adapter_name="Ethernet",
+            adapter_type="Ethernet",
+            ip_address="192.168.10.20",
+            mac_address="00-11-22-33-44-55",
+            description="Intel Ethernet",
+        ),
+    )
+    command_runner = FakeCommandRunner(
+        json.dumps(
+            {
+                "Name": "Wi-Fi",
+                "InterfaceDescription": "Intel Wi-Fi",
+                "Status": "Up",
+                "MacAddress": "AA-BB-CC-DD-EE-FF",
+                "IpAddress": "192.168.10.30",
+                "Gateway": "192.168.10.1",
+                "InterfaceMetric": 1,
+                "RouteMetric": 1,
+            }
+        )
+    )
+    reader = ControlledWmiPcInfoReader({}, command_runner=command_runner)
+
+    network_info = reader._get_active_network_info()
+
+    assert network_info == PcNetworkInfo(
+        adapter_name="Ethernet",
+        adapter_type="Ethernet",
+        ip_address="192.168.10.20",
+        mac_address="00-11-22-33-44-55",
+        description="Intel Ethernet",
+    )
+    assert command_runner.commands == []
+
+
 def test_pc_info_network_selection_falls_back_to_wmi_when_powershell_fails() -> None:
     command_runner = FakeCommandRunner("not json")
     reader = ControlledWmiPcInfoReader(
@@ -845,11 +933,40 @@ def test_pc_info_network_selection_falls_back_to_wmi_when_powershell_fails() -> 
     )
 
 
-def test_get_adapters_addresses_candidate_selection_and_mac_formatting() -> None:
+def test_pc_info_network_selection_falls_back_to_powershell_when_low_level_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_low_level() -> PcNetworkInfo | None:
+        raise OSError("GetAdaptersAddresses failed")
+
+    monkeypatch.setattr(wmi_pc_info_reader, "read_active_network_info", fail_low_level)
+    command_runner = FakeCommandRunner(
+        json.dumps(
+            {
+                "Name": "Ethernet",
+                "InterfaceDescription": "Intel(R) Ethernet Connection I219-LM",
+                "Status": "Up",
+                "MacAddress": "001122334455",
+                "IpAddress": "192.168.10.20",
+                "Gateway": "192.168.10.1",
+                "InterfaceMetric": 10,
+                "RouteMetric": 10,
+            }
+        )
+    )
+    reader = ControlledWmiPcInfoReader({}, command_runner=command_runner)
+
+    network_info = reader._get_active_network_info()
+
+    assert network_info is not None
+    assert network_info.ip_address == "192.168.10.20"
+    assert command_runner.commands
+    assert command_runner.commands[0][0] == "powershell"
+
+
+def test_get_adapters_addresses_candidate_selection_prefers_ethernet_over_wifi() -> None:
     selected = select_network_identity_candidate(
         [
             NetworkIdentityCandidate("100.64.0.1", "00:11:22:33:44:55", "Tailscale", IF_TYPE_ETHERNET_CSMACD, True, True, 5),
-            NetworkIdentityCandidate("192.168.0.30", "aa:bb:cc:dd:ee:ff", "Wi-Fi", 71, True, True, 1),
+            NetworkIdentityCandidate("192.168.0.30", "aa:bb:cc:dd:ee:ff", "Wi-Fi", IF_TYPE_IEEE80211, True, True, 1),
             NetworkIdentityCandidate("192.168.0.20", "11-22-33-44-55-66", "Realtek Ethernet", IF_TYPE_ETHERNET_CSMACD, True, False, 1),
             NetworkIdentityCandidate("192.168.0.10", "aa:bb:cc:dd:ee:ff", "Realtek Ethernet", IF_TYPE_ETHERNET_CSMACD, True, True, 25),
         ]
@@ -858,6 +975,103 @@ def test_get_adapters_addresses_candidate_selection_and_mac_formatting() -> None
     assert selected is not None
     assert selected.ip == "192.168.0.10"
     assert normalize_mac_address(selected.mac) == "AA-BB-CC-DD-EE-FF"
+
+
+def test_get_adapters_addresses_candidate_selection_uses_wifi_when_ethernet_is_invalid() -> None:
+    selected = select_network_identity_candidate(
+        [
+            NetworkIdentityCandidate("192.168.0.20", "11-22-33-44-55-66", "Realtek Ethernet", IF_TYPE_ETHERNET_CSMACD, False, True, 1),
+            NetworkIdentityCandidate("192.168.0.30", "aa:bb:cc:dd:ee:ff", "Wi-Fi", IF_TYPE_IEEE80211, True, True, 20),
+        ]
+    )
+
+    assert selected is not None
+    assert selected.friendly_name == "Wi-Fi"
+
+
+def test_get_adapters_addresses_candidate_selection_excludes_gatewayless_and_virtual_adapters() -> None:
+    selected = select_network_identity_candidate(
+        [
+            NetworkIdentityCandidate("192.168.0.10", "00:11:22:33:44:10", "Realtek Ethernet", IF_TYPE_ETHERNET_CSMACD, True, False, 1),
+            NetworkIdentityCandidate("192.168.65.1", "00:11:22:33:44:20", "vEthernet Docker", IF_TYPE_ETHERNET_CSMACD, True, True, 1),
+            NetworkIdentityCandidate("10.0.0.2", "00:11:22:33:44:30", "WireGuard Tunnel", IF_TYPE_ETHERNET_CSMACD, True, True, 1),
+            NetworkIdentityCandidate("192.168.0.30", "00:11:22:33:44:40", "Wi-Fi", IF_TYPE_IEEE80211, True, True, 20),
+        ]
+    )
+
+    assert selected is not None
+    assert selected.friendly_name == "Wi-Fi"
+
+
+def test_get_adapters_addresses_candidate_selection_prefers_low_metric_within_same_type() -> None:
+    selected = select_network_identity_candidate(
+        [
+            NetworkIdentityCandidate("192.168.0.10", "00:11:22:33:44:10", "Ethernet A", IF_TYPE_ETHERNET_CSMACD, True, True, 25),
+            NetworkIdentityCandidate("192.168.0.11", "00:11:22:33:44:11", "Ethernet B", IF_TYPE_ETHERNET_CSMACD, True, True, 5),
+        ]
+    )
+
+    assert selected is not None
+    assert selected.ip == "192.168.0.11"
+
+
+def test_wmi_reader_uses_cpu_registry_fast_path_without_processor_wmi() -> None:
+    registry = FakeRegistry()
+    registry.set_value(
+        "HKEY_LOCAL_MACHINE",
+        r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+        "ProcessorNameString",
+        "Intel Core from Registry",
+    )
+    reader = ControlledWmiPcInfoReader({}, registry=registry)
+
+    assert reader._get_cpu_name() == "Intel Core from Registry"
+    assert reader.wmi_call_counts.get(("Win32_Processor", None), 0) == 0
+
+
+def test_wmi_reader_falls_back_to_processor_wmi_when_cpu_registry_is_missing() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_Processor", None): [WmiItem(Name="Intel Core from WMI")],
+        },
+        registry=FakeRegistry(),
+    )
+
+    assert reader._get_cpu_name() == "Intel Core from WMI"
+    assert reader.wmi_call_counts.get(("Win32_Processor", None), 0) == 1
+
+
+def test_wmi_reader_reads_msft_physical_disk_once_for_disks() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_DiskDrive", None): [
+                WmiItem(
+                    Model="Samsung SSD 970 EVO Plus 500GB",
+                    SerialNumber="S4EWNX0M123456",
+                    Size=str(500 * 1024**3),
+                    InterfaceType="SCSI",
+                    Index="0",
+                )
+            ],
+            ("MSFT_Disk", r"root\Microsoft\Windows\Storage"): [
+                WmiItem(Number=0, Model="Samsung SSD 970 EVO Plus 500GB", Size=str(500 * 1024**3), BusType=17),
+            ],
+            ("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage"): [
+                WmiItem(
+                    FriendlyName="Samsung SSD 970 EVO Plus 500GB",
+                    SerialNumber="S4EWNX0M123456",
+                    MediaType=4,
+                    BusType=17,
+                    Size=str(500 * 1024**3),
+                )
+            ],
+        }
+    )
+
+    disks = reader._get_disks()
+
+    assert disks[0].display_type == "SSD (NVMe)"
+    assert reader.wmi_call_counts[("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")] == 1
 
 
 def test_memory_type_mapping_includes_lpddr3_code_27() -> None:
