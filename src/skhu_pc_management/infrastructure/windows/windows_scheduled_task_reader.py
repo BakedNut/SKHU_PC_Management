@@ -220,12 +220,18 @@ def _parse_time(value: object) -> str | None:
     if not text:
         return None
 
-    match = re.search(r"(?P<hour>\d{1,2}):(?P<minute>\d{2})(?::\d{2})?\s*(?P<period>AM|PM|오전|오후)?", text, re.IGNORECASE)
+    match = re.search(
+        r"(?:(?P<prefix>AM|PM|오전|오후)\s*)?"
+        r"(?P<hour>\d{1,2}):(?P<minute>\d{2})(?::\d{2})?"
+        r"\s*(?P<suffix>AM|PM|오전|오후)?",
+        text,
+        re.IGNORECASE,
+    )
     if match is None:
         return None
 
     hour = int(match.group("hour"))
-    period = (match.group("period") or "").casefold()
+    period = (match.group("prefix") or match.group("suffix") or "").casefold()
     if period in {"pm", "오후"} and hour < 12:
         hour += 12
     if period in {"am", "오전"} and hour == 12:

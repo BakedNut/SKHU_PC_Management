@@ -752,6 +752,15 @@ def test_auto_shutdown_schedule_check_reports_warning_for_wrong_trigger_time() -
     assert "시간=23:00" in (result.detail or "")
 
 
+def test_auto_shutdown_schedule_check_reports_warning_for_unconverted_pm_trigger_time() -> None:
+    task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="10:55", executable="shutdown.exe", arguments="-s -t 300")
+
+    result = AutoShutdownScheduleCheck(FakeScheduledTaskReader(task)).run()
+
+    assert result.status == CheckStatus.WARNING
+    assert "시간=10:55" in (result.detail or "")
+
+
 def test_auto_shutdown_schedule_check_reports_warning_for_wrong_executable() -> None:
     task = ScheduledTaskInfo("23시 자동 종료", exists=True, trigger_time="22:55", executable="notepad.exe", arguments="-s -t 300")
 

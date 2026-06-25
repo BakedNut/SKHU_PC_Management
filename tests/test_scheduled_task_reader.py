@@ -5,6 +5,7 @@ from collections.abc import Sequence
 
 from skhu_pc_management.infrastructure.windows.windows_scheduled_task_reader import (
     WindowsScheduledTaskReader,
+    _parse_time,
     parse_schtasks_csv,
     parse_scheduled_task_json,
 )
@@ -109,6 +110,35 @@ def test_parse_schtasks_csv_reads_task_details() -> None:
     assert task.arguments == "-s -t 300"
 
 
+def test_parse_time_handles_korean_prefix_suffix_and_24_hour_formats() -> None:
+    assert _parse_time("오후 10:55:00") == "22:55"
+    assert _parse_time("오전 09:05:00") == "09:05"
+    assert _parse_time("오전 12:05:00") == "00:05"
+    assert _parse_time("오후 12:05:00") == "12:05"
+    assert _parse_time("10:55:00 PM") == "22:55"
+    assert _parse_time("10:55:00 AM") == "10:55"
+    assert _parse_time("10:55:00 오후") == "22:55"
+    assert _parse_time("09:05:00 오전") == "09:05"
+    assert _parse_time("22:55:00") == "22:55"
+    assert _parse_time("22:55") == "22:55"
+
+
+def test_parse_schtasks_csv_reads_korean_headers_and_korean_prefix_time() -> None:
+    output = (
+        '"작업 이름","실행할 작업","시작 시간","상태"\n'
+        '"\\\\23시 자동 종료","shutdown.exe -s -t 300","오후 10:55:00","Ready"\n'
+    )
+
+    task = parse_schtasks_csv("23시 자동 종료", output)
+
+    assert task is not None
+    assert task.exists is True
+    assert task.name == "23시 자동 종료"
+    assert task.trigger_time == "22:55"
+    assert task.executable == "shutdown.exe"
+    assert task.arguments == "-s -t 300"
+
+
 def test_windows_scheduled_task_reader_uses_schtasks_fast_path_without_powershell() -> None:
     runner = FakeCommandRunner(
         '"TaskName","Task To Run","Start Time","Status"\n'
@@ -119,6 +149,21 @@ def test_windows_scheduled_task_reader_uses_schtasks_fast_path_without_powershel
 
     assert task.exists is True
     assert task.executable == "shutdown.exe"
+    assert runner.commands == [("schtasks", "/Query", "/TN", "23시 자동 종료", "/FO", "CSV", "/V")]
+
+
+def test_windows_scheduled_task_reader_uses_korean_schtasks_fast_path_without_powershell() -> None:
+    runner = FakeCommandRunner(
+        '"작업 이름","실행할 작업","시작 시간","상태"\n'
+        '"\\\\23시 자동 종료","shutdown.exe -s -t 300","오후 10:55:00","Ready"\n'
+    )
+
+    task = WindowsScheduledTaskReader(runner).get_task("23시 자동 종료")
+
+    assert task.exists is True
+    assert task.trigger_time == "22:55"
+    assert task.executable == "shutdown.exe"
+    assert task.arguments == "-s -t 300"
     assert runner.commands == [("schtasks", "/Query", "/TN", "23시 자동 종료", "/FO", "CSV", "/V")]
 
 
