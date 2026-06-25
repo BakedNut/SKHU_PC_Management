@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from collections.abc import Mapping
 from typing import Iterable
 
+from skhu_pc_management.application.profiling import EnvProfiler
 from skhu_pc_management.domain.settings.definitions import (
     DEFAULT_SETTING_DEFINITIONS_BY_ID,
     RegistrySettingDefinition,
@@ -23,25 +25,43 @@ class CheckSettingsStatus:
     )
 
     def execute(self, setting_ids: Iterable[str]) -> list[SettingStatus]:
-        statuses: list[SettingStatus] = []
+        ids = list(setting_ids)
+        if not ids:
+            return []
 
-        for setting_id in setting_ids:
+        profiler = EnvProfiler("SKHU_PC_MANAGEMENT_PROFILE_TABS")
+        with profiler.step("check_settings_status.total"):
+            results: list[SettingStatus | None] = [None] * len(ids)
+            max_workers = min(8, len(ids))
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(self._check_setting_id, setting_id): (index, setting_id)
+                    for index, setting_id in enumerate(ids)
+                }
+                for future in as_completed(futures):
+                    index, setting_id = futures[future]
+                    try:
+                        results[index] = future.result()
+                    except Exception as exc:
+                        results[index] = self._build_exception_status(setting_id, exc)
+
+            collected_results: list[SettingStatus] = []
+            for result in results:
+                if result is None:
+                    raise RuntimeError("Setting status result was not collected.")
+                collected_results.append(result)
+            return collected_results
+
+    def _check_setting_id(self, setting_id: str) -> SettingStatus:
+        with EnvProfiler("SKHU_PC_MANAGEMENT_PROFILE_TABS").step(f"check_settings_status.{setting_id}"):
             definition = self.definitions_by_id.get(setting_id)
             if definition is None:
-                statuses.append(
-                    SettingStatus(
-                        setting_id=setting_id,
-                        label=setting_id,
-                        name=setting_id,
-                        severity="error",
-                        status_text=f"Unknown setting id: {setting_id}",
-                    )
-                )
-                continue
-
-            statuses.append(self._check_definition(definition))
-
-        return statuses
+                return self._build_unknown_setting_status(setting_id)
+            try:
+                return self._check_definition(definition)
+            except Exception as exc:
+                return self._build_exception_status(setting_id, exc, definition)
 
     def _check_definition(self, definition: SettingDefinition) -> SettingStatus:
         provider = self.setting_status_providers.get(definition.setting_id)
@@ -151,6 +171,33 @@ class CheckSettingsStatus:
             is_applied=is_configured,
             current_value=None if actual_value is None else str(actual_value),
             detail=detail or (f"현재값: {actual_value}" if actual_value is not None else "현재값 없음"),
+        )
+
+    @staticmethod
+    def _build_unknown_setting_status(setting_id: str) -> SettingStatus:
+        return SettingStatus(
+            setting_id=setting_id,
+            label=setting_id,
+            name=setting_id,
+            severity="error",
+            status_text=f"Unknown setting id: {setting_id}",
+        )
+
+    @staticmethod
+    def _build_exception_status(
+        setting_id: str,
+        exc: Exception,
+        definition: SettingDefinition | None = None,
+    ) -> SettingStatus:
+        label = definition.name if definition is not None else setting_id
+        return SettingStatus(
+            setting_id=setting_id,
+            label=label,
+            name=label,
+            severity="unknown",
+            status_text="read_failed",
+            detail=f"상태를 확인할 수 없습니다: {exc}",
+            current_value="상태 확인 실패",
         )
 
 

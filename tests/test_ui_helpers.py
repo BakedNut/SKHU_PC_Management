@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 
 import pytest
 
@@ -641,6 +642,88 @@ def test_action_center_refresh_and_apply_use_visible_setting_ids(qt_app: QApplic
     assert panel.start_menu_section.property("state") == "active"
     assert panel.start_menu_unavailable_label.isHidden()
     assert all(not row.isHidden() for row in panel._win11_setting_rows)
+
+
+def test_action_center_refresh_runs_settings_and_pc_checks_in_parallel(qt_app: QApplication) -> None:
+    barrier = threading.Barrier(2)
+    settings_completed = threading.Event()
+    pc_checks_completed = threading.Event()
+
+    class BarrierSettings(_FakeSettings):
+        def check_status(self, setting_ids: list[str]) -> None:
+            barrier.wait(timeout=3)
+            super().check_status(setting_ids)
+            settings_completed.set()
+
+    class BarrierPcCheck(_FakePcCheck):
+        def run_checks(self) -> None:
+            barrier.wait(timeout=3)
+            super().run_checks()
+            pc_checks_completed.set()
+
+    panel = ActionCenterPanel(BarrierSettings(), BarrierPcCheck(), _FakeActivation())
+
+    panel._refresh_status()
+
+    assert settings_completed.is_set()
+    assert pc_checks_completed.is_set()
+
+
+def test_action_center_refresh_renders_once_after_parallel_tasks(qt_app: QApplication) -> None:
+    panel = ActionCenterPanel(_FakeSettings(), _FakePcCheck(), _FakeActivation())
+    render_count = 0
+
+    def render_spy() -> None:
+        nonlocal render_count
+        render_count += 1
+
+    panel.render = render_spy  # type: ignore[method-assign]
+
+    panel._refresh_status()
+
+    assert render_count == 1
+
+
+def test_action_center_refresh_runs_pc_checks_when_settings_fails(qt_app: QApplication) -> None:
+    class FailingSettings(_FakeSettings):
+        def check_status(self, setting_ids: list[str]) -> None:
+            raise RuntimeError("settings boom")
+
+    pc_check = _FakePcCheck()
+    panel = ActionCenterPanel(FailingSettings(), pc_check, _FakeActivation())
+    render_count = 0
+
+    def render_spy() -> None:
+        nonlocal render_count
+        render_count += 1
+
+    panel.render = render_spy  # type: ignore[method-assign]
+
+    panel._refresh_status()
+
+    assert pc_check.run_count == 1
+    assert render_count == 1
+
+
+def test_action_center_refresh_runs_settings_when_pc_checks_fail(qt_app: QApplication) -> None:
+    class FailingPcCheck(_FakePcCheck):
+        def run_checks(self) -> None:
+            raise RuntimeError("pc check boom")
+
+    settings = _FakeSettings()
+    panel = ActionCenterPanel(settings, FailingPcCheck(), _FakeActivation())
+    render_count = 0
+
+    def render_spy() -> None:
+        nonlocal render_count
+        render_count += 1
+
+    panel.render = render_spy  # type: ignore[method-assign]
+
+    panel._refresh_status()
+
+    assert settings.check_requests
+    assert render_count == 1
 
 
 def test_action_center_test_mode_disables_program_launch_buttons(qt_app: QApplication) -> None:

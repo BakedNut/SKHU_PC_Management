@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from skhu_pc_management.application.safety import TEST_MODE_DISABLED_MESSAGE
+from skhu_pc_management.application.profiling import EnvProfiler
 from skhu_pc_management.presentation.qt.busy_coordinator import BusyCoordinator
 from skhu_pc_management.presentation.qt.maintenance_confirmations import maintenance_confirmation_for
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
@@ -549,8 +551,7 @@ class ActionCenterPanel(QWidget):
         if self._busy_coordinator and not self._busy_coordinator.try_begin("상태를 새로고침하는 중..."):
             return
         try:
-            self._settings.check_status(self._visible_setting_ids())
-            self._pc_check.run_checks()
+            self._refresh_status_data()
             self.render()
         finally:
             if self._busy_coordinator:
@@ -707,9 +708,38 @@ class ActionCenterPanel(QWidget):
         return QMessageBox.question(self, confirmation.title, confirmation.message) == QMessageBox.Yes
 
     def _refresh_after_action(self) -> None:
-        self._settings.check_status(self._visible_setting_ids())
-        self._pc_check.run_checks()
+        self._refresh_status_data()
         self.render()
+
+    def _refresh_status_data(self) -> None:
+        profiler = EnvProfiler("SKHU_PC_MANAGEMENT_PROFILE_TABS")
+        visible_setting_ids = self._visible_setting_ids()
+        with profiler.step("action_center.refresh_status.total"):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures: dict[Future[None], str] = {
+                    executor.submit(self._check_settings_status, visible_setting_ids): "settings",
+                    executor.submit(self._run_pc_checks): "pc_checks",
+                }
+                for future in as_completed(futures):
+                    scope = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        self._record_refresh_failure(scope, exc)
+
+    def _check_settings_status(self, visible_setting_ids: list[str]) -> None:
+        with EnvProfiler("SKHU_PC_MANAGEMENT_PROFILE_TABS").step("action_center.settings_status"):
+            self._settings.check_status(visible_setting_ids)
+
+    def _run_pc_checks(self) -> None:
+        with EnvProfiler("SKHU_PC_MANAGEMENT_PROFILE_TABS").step("action_center.pc_checks"):
+            self._pc_check.run_checks()
+
+    def _record_refresh_failure(self, scope: str, exc: Exception) -> None:
+        if scope == "settings":
+            self._settings.status_message = f"설정 상태 확인 실패: {exc}"
+            return
+        self._pc_check.status_message = f"PC 점검 실패: {exc}"
 
     def _show_result(self, result: object) -> None:
         message = getattr(result, "message", "")

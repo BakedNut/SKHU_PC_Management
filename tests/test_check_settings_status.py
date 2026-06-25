@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
+
 from skhu_pc_management.application.use_cases.check_settings_status import CheckSettingsStatus
-from skhu_pc_management.domain.settings.definitions import HKCU, HKLM
+from skhu_pc_management.domain.settings.definitions import HKCU, HKLM, SettingDefinition
 from skhu_pc_management.domain.settings.models import SettingStatus
 
 
@@ -174,3 +176,109 @@ def test_non_registry_setting_without_provider_returns_korean_missing_status() -
     assert status.status_text == "status_provider_missing"
     assert status.detail == "상태 확인 구현 필요"
     assert "No registry-backed" not in status.detail
+
+
+def test_execute_returns_empty_list_for_empty_setting_ids() -> None:
+    use_case = CheckSettingsStatus(FakeRegistry())
+
+    assert use_case.execute([]) == []
+
+
+def test_execute_preserves_input_order_when_checks_finish_out_of_order() -> None:
+    class FakeProvider:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def check(self, setting_id: str) -> SettingStatus:
+            return SettingStatus(
+                setting_id=setting_id,
+                label=self.label,
+                is_configured=True,
+                severity="ok",
+                status_text="configured",
+            )
+
+    definitions = {
+        "first": SettingDefinition("first", "First"),
+        "second": SettingDefinition("second", "Second"),
+        "third": SettingDefinition("third", "Third"),
+    }
+    use_case = CheckSettingsStatus(
+        FakeRegistry(),
+        setting_status_providers={
+            "first": FakeProvider("First"),
+            "second": FakeProvider("Second"),
+            "third": FakeProvider("Third"),
+        },
+        definitions_by_id=definitions,
+    )
+
+    statuses = use_case.execute(["third", "first", "second"])
+
+    assert [status.setting_id for status in statuses] == ["third", "first", "second"]
+    assert [status.label for status in statuses] == ["Third", "First", "Second"]
+
+
+def test_provider_failure_is_isolated_to_that_setting() -> None:
+    class PassingProvider:
+        def check(self, setting_id: str) -> SettingStatus:
+            return SettingStatus(
+                setting_id=setting_id,
+                label="정상 항목",
+                is_configured=True,
+                severity="ok",
+                status_text="configured",
+            )
+
+    class FailingProvider:
+        def check(self, setting_id: str) -> SettingStatus:
+            raise RuntimeError("provider boom")
+
+    definitions = {
+        "passing": SettingDefinition("passing", "정상 항목"),
+        "failing": SettingDefinition("failing", "실패 항목"),
+    }
+    use_case = CheckSettingsStatus(
+        FakeRegistry(),
+        setting_status_providers={"passing": PassingProvider(), "failing": FailingProvider()},
+        definitions_by_id=definitions,
+    )
+
+    statuses = use_case.execute(["passing", "failing"])
+
+    assert statuses[0].setting_id == "passing"
+    assert statuses[0].status_text == "configured"
+    assert statuses[1].setting_id == "failing"
+    assert statuses[1].severity == "unknown"
+    assert statuses[1].status_text == "read_failed"
+    assert "provider boom" in statuses[1].detail
+
+
+def test_execute_runs_setting_providers_in_parallel() -> None:
+    barrier = threading.Barrier(2)
+
+    class BarrierProvider:
+        def check(self, setting_id: str) -> SettingStatus:
+            barrier.wait(timeout=3)
+            return SettingStatus(
+                setting_id=setting_id,
+                label=setting_id,
+                is_configured=True,
+                severity="ok",
+                status_text="configured",
+            )
+
+    definitions = {
+        "first": SettingDefinition("first", "First"),
+        "second": SettingDefinition("second", "Second"),
+    }
+    provider = BarrierProvider()
+    use_case = CheckSettingsStatus(
+        FakeRegistry(),
+        setting_status_providers={"first": provider, "second": provider},
+        definitions_by_id=definitions,
+    )
+
+    statuses = use_case.execute(["first", "second"])
+
+    assert [status.status_text for status in statuses] == ["configured", "configured"]
