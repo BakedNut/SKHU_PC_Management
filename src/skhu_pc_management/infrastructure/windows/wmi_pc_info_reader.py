@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ctypes
 from dataclasses import dataclass
 import getpass
 import re
@@ -44,6 +45,9 @@ class _StartupProfileStep:
 class WmiPcInfoReader:
     registry: Registry | None = None
     command_runner: CommandRunner | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_wmi_clients_by_namespace", {})
 
     def read(self) -> PcInfo:
         profiler = _StartupProfiler()
@@ -200,14 +204,15 @@ class WmiPcInfoReader:
             return None
 
     def _get_memory_info(self) -> tuple[float | None, str, int | None, list[MemoryModuleInfo]]:
+        fast_total_gb = self._get_total_memory_gb_fast()
         modules: list[MemoryModuleInfo] = []
         total_bytes = 0
         max_speed: int | None = None
         common_type = "Unknown"
 
-        for index, item in enumerate(self._wmi_items("Win32_PhysicalMemory"), start=1):
+        for index, item in enumerate(self._profiled_wmi_items("Win32_PhysicalMemory"), start=1):
             capacity_bytes = _to_int(_get_value(item, "Capacity"))
-            speed = _to_int(_get_value(item, "Speed"))
+            speed = _positive_int(_get_value(item, "Speed"))
             memory_type = _memory_type_from_code(
                 _to_int(_get_value(item, "SMBIOSMemoryType"))
                 or _to_int(_get_value(item, "MemoryType"))
@@ -230,7 +235,12 @@ class WmiPcInfoReader:
                 )
             )
 
-        return _bytes_to_gb(total_bytes), common_type, max_speed, modules
+        total_gb = _bytes_to_gb(total_bytes) if total_bytes else fast_total_gb
+        return total_gb, common_type, max_speed, modules
+
+    def _get_total_memory_gb_fast(self) -> float | None:
+        with _StartupProfiler().step("memory.fast_total"):
+            return _get_total_memory_gb_fast()
 
     def _get_gpu_info(self) -> tuple[str | None, str | None, list[str]]:
         dxgi_info = self._read_dxgi_gpu_info()
@@ -239,7 +249,7 @@ class WmiPcInfoReader:
 
         candidates: list[_GpuCandidate] = []
         has_basic_display = False
-        for item in self._wmi_items("Win32_VideoController"):
+        for item in self._profiled_wmi_items("Win32_VideoController"):
             name = _to_string(_get_value(item, "Name")) or "Unknown GPU"
             adapter_compatibility = _to_string(_get_value(item, "AdapterCompatibility")) or ""
             adapter_ram = _to_int(_get_value(item, "AdapterRAM"))
@@ -265,12 +275,15 @@ class WmiPcInfoReader:
         return None, None, gpu_names
 
     def _get_disks(self) -> list[DiskInfo]:
-        physical_rows = self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
-        physical_disks = self._build_physical_disk_metadata(physical_rows)
-        disk_type_by_index = self._get_disk_type_by_index(physical_rows)
+        physical_rows = self._profiled_wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
+        with _StartupProfiler().step("disks.storage_wmi"):
+            physical_disks = self._build_physical_disk_metadata(physical_rows)
+            disk_type_by_index = self._get_disk_type_by_index(physical_rows)
         disks: list[DiskInfo] = []
         try:
-            for item in self._wmi_items("Win32_DiskDrive"):
+            with _StartupProfiler().step("disks.win32_diskdrive"):
+                disk_drive_rows = self._profiled_wmi_items("Win32_DiskDrive")
+            for item in disk_drive_rows:
                 if _is_usb_or_removable_disk(item):
                     continue
                 disks.append(_build_disk_info(item, physical_disks, disk_type_by_index))
@@ -334,11 +347,11 @@ class WmiPcInfoReader:
     def _get_active_network_info_with_wmi(self) -> "_NetworkCandidate | None":
         adapters_by_index = {
             _to_int(_get_value(item, "Index")): item
-            for item in self._wmi_items("Win32_NetworkAdapter")
+            for item in self._profiled_wmi_items("Win32_NetworkAdapter")
             if _to_int(_get_value(item, "Index")) is not None
         }
         candidates: list[_NetworkCandidate] = []
-        for item in self._wmi_items("Win32_NetworkAdapterConfiguration"):
+        for item in self._profiled_wmi_items("Win32_NetworkAdapterConfiguration"):
             candidate = _network_candidate_from_wmi_item(item, adapters_by_index)
             if candidate is not None:
                 candidates.append(candidate)
@@ -352,7 +365,7 @@ class WmiPcInfoReader:
 
     def _get_physical_disks(self) -> list["_PhysicalDiskMetadata"]:
         return self._build_physical_disk_metadata(
-            self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
+            self._profiled_wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
         )
 
     @staticmethod
@@ -372,9 +385,9 @@ class WmiPcInfoReader:
 
     def _get_disk_type_by_index(self, physical_rows: list[Any] | None = None) -> dict[int, str]:
         if physical_rows is None:
-            physical_rows = self._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
+            physical_rows = self._profiled_wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage")
         return _build_disk_type_by_index_from_storage_wmi(
-            self._wmi_items("MSFT_Disk", r"root\Microsoft\Windows\Storage"),
+            self._profiled_wmi_items("MSFT_Disk", r"root\Microsoft\Windows\Storage"),
             physical_rows,
         )
 
@@ -384,8 +397,14 @@ class WmiPcInfoReader:
             version = (_to_string(_get_value(item, "SpecVersion")) or "Unknown").split(",")[0].strip()
             return True, version
 
+        registry_info = self._get_tpm_info_from_registry()
+        if registry_info is not None:
+            return registry_info
+        return None, None
+
+    def _get_tpm_info_from_registry(self) -> tuple[bool | None, str | None] | None:
         if self.registry is None:
-            return None, None
+            return None
 
         try:
             start = self.registry.read_value(
@@ -394,14 +413,11 @@ class WmiPcInfoReader:
                 "Start",
             )
         except Exception:
-            return None, None
+            return None
 
         if start is None:
-            return False, "Not installed"
-        try:
-            return True, "2.0" if int(start) != 3 else "2.0 (disabled)"
-        except (TypeError, ValueError):
-            return True, "Unknown"
+            return None
+        return True, None
 
     def _get_secure_boot_info(self) -> tuple[bool | None, str]:
         if self.registry is None:
@@ -462,20 +478,35 @@ class WmiPcInfoReader:
         return "Unknown"
 
     def _first_wmi_item(self, wmi_class: str, namespace: str | None = None) -> Any | None:
-        for item in self._wmi_items(wmi_class, namespace):
+        for item in self._profiled_wmi_items(wmi_class, namespace):
             return item
         return None
 
-    @staticmethod
-    def _wmi_items(wmi_class: str, namespace: str | None = None) -> list[Any]:
+    def _wmi_items(self, wmi_class: str, namespace: str | None = None) -> list[Any]:
         try:
-            import wmi
-
-            client = wmi.WMI(namespace=namespace) if namespace else wmi.WMI()
+            client = self._wmi_client(namespace)
             query_method = getattr(client, wmi_class)
             return list(query_method())
         except Exception:
             return []
+
+    def _profiled_wmi_items(self, wmi_class: str, namespace: str | None = None) -> list[Any]:
+        with _StartupProfiler().step(f"wmi.{wmi_class}"):
+            try:
+                return self._wmi_items(wmi_class, namespace)
+            except Exception:
+                return []
+
+    def _wmi_client(self, namespace: str | None = None) -> Any:
+        clients = self._wmi_clients_by_namespace
+        if namespace in clients:
+            return clients[namespace]
+
+        import wmi
+
+        client = wmi.WMI(namespace=namespace) if namespace else wmi.WMI()
+        clients[namespace] = client
+        return client
 
 
 @dataclass(frozen=True)
@@ -713,14 +744,15 @@ def _bus_type_from_mapped_type(value: str | None) -> str | None:
 def _detect_disk_type_from_physical_drive(index: int | None) -> str:
     if index is None or index < 0:
         return "Unknown"
-    bus_type = _query_physical_drive_bus_type(index)
-    if bus_type == 17:
-        return "NVMe"
-    seek_penalty = _query_physical_drive_seek_penalty(index)
-    if seek_penalty is True:
-        return "HDD"
-    if seek_penalty is False:
-        return "SSD"
+    with _StartupProfiler().step("disks.device_io_control"):
+        bus_type = _query_physical_drive_bus_type(index)
+        if bus_type == 17:
+            return "NVMe"
+        seek_penalty = _query_physical_drive_seek_penalty(index)
+        if seek_penalty is True:
+            return "HDD"
+        if seek_penalty is False:
+            return "SSD"
     return "Unknown"
 
 
@@ -996,6 +1028,13 @@ def _to_int(value: Any | None) -> int | None:
         return None
 
 
+def _positive_int(value: Any | None) -> int | None:
+    number = _to_int(value)
+    if number is None or number <= 0:
+        return None
+    return number
+
+
 def _parse_boolish(value: Any | None) -> bool | None:
     if value is None:
         return None
@@ -1015,6 +1054,31 @@ def _bytes_to_gb(value: int | None) -> float | None:
     if not value:
         return None
     return round(value / (1024**3), 2)
+
+
+class _MemoryStatusEx(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def _get_total_memory_gb_fast() -> float | None:
+    try:
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return _bytes_to_gb(int(status.ullTotalPhys))
+    except Exception:
+        return None
 
 
 def _windows_release(caption: str, build_text: str | None) -> str | None:

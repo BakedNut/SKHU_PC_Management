@@ -8,7 +8,12 @@ from skhu_pc_management.domain.settings.models import ApplyResult, ApplySettings
 from skhu_pc_management.presentation.qt.viewmodels.activation_viewmodel import ActivationViewModel
 from skhu_pc_management.presentation.qt.viewmodels.network_viewmodel import NetworkViewModel
 from skhu_pc_management.presentation.qt.viewmodels.pc_check_viewmodel import PcCheckViewModel
-from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import PcInfoViewModel, _format_ram, _format_windows_detail
+from skhu_pc_management.presentation.qt.viewmodels.pc_info_viewmodel import (
+    PcInfoViewModel,
+    _format_ram,
+    _format_tpm,
+    _format_windows_detail,
+)
 from skhu_pc_management.presentation.qt.viewmodels.settings_viewmodel import SettingsViewModel
 
 
@@ -41,6 +46,14 @@ class FakeLoadPcInfo:
             ),
             disk_nvme_summary="1개(512GB x1)",
         )
+
+
+class FakeLoadPcInfoWith:
+    def __init__(self, pc_info: PcInfo) -> None:
+        self.pc_info = pc_info
+
+    def execute(self) -> PcInfo:
+        return self.pc_info
 
 
 class FakeUnknownPcInfo:
@@ -347,6 +360,82 @@ def test_pc_info_viewmodel_formats_ram_module_groups() -> None:
             memory_modules=[MemoryModuleInfo("Slot 1", capacity_gb=None, memory_type="Unknown")],
         )
     ) == "16GB"
+
+
+def test_pc_info_viewmodel_formats_ram_unknown_clock_for_modules_without_speed() -> None:
+    assert _format_ram(
+        PcInfo(
+            computer_name="PC01",
+            user_name="student",
+            os_name="Windows",
+            cpu_name="CPU",
+            memory_gb=32,
+            memory_modules=[
+                MemoryModuleInfo("Slot 1", capacity_gb=16, memory_type="DDR5", speed_mhz=None),
+                MemoryModuleInfo("Slot 2", capacity_gb=16, memory_type="DDR5", speed_mhz=None),
+            ],
+        )
+    ) == "32GB (2개: DDR5 16GB x2, 클럭 알 수 없음)"
+
+
+def test_pc_info_viewmodel_keeps_ram_module_details_when_fast_total_exists() -> None:
+    assert _format_ram(
+        PcInfo(
+            computer_name="PC01",
+            user_name="student",
+            os_name="Windows",
+            cpu_name="CPU",
+            memory_gb=32,
+            memory_modules=[
+                MemoryModuleInfo("Slot 1", capacity_gb=16, memory_type="DDR5", speed_mhz=5600),
+                MemoryModuleInfo("Slot 2", capacity_gb=16, memory_type="DDR5", speed_mhz=5600),
+            ],
+        )
+    ) == "32GB (2개: DDR5-5600 16GB x2)"
+
+
+def test_pc_info_viewmodel_does_not_show_tpm_disabled_from_registry_fallback() -> None:
+    pc_info = PcInfo(
+        computer_name="PC01",
+        user_name="student",
+        os_name="Windows",
+        cpu_name="CPU",
+        tpm_installed=True,
+        tpm_version=None,
+    )
+
+    assert _format_tpm(pc_info) == "설치됨"
+    assert "disabled" not in _format_tpm(pc_info).lower()
+
+
+def test_pc_info_viewmodel_keeps_disk_rows_and_summary_when_disk_exists() -> None:
+    view_model = PcInfoViewModel(
+        FakeLoadPcInfoWith(
+            PcInfo(
+                computer_name="PC01",
+                user_name="student",
+                os_name="Windows",
+                cpu_name="CPU",
+                disks=[
+                    DiskInfo(
+                        model="Samsung NVMe SSD 980",
+                        actual_size_gib=512.0,
+                        rated_size="512GB",
+                        disk_type="SSD",
+                        bus_type="NVMe",
+                        display_type="SSD (NVMe)",
+                    )
+                ],
+                disk_nvme_summary="1개(512GB x1)",
+            )
+        )
+    )
+
+    view_model.refresh()
+
+    assert view_model.disks == [("Samsung NVMe SSD 980", "SSD (NVMe)", "512GB", "512 GiB")]
+    assert view_model.disk_nvme_summary == "1개(512GB x1)"
+    assert view_model.disk_ssd_summary == "없음"
 
 
 def test_pc_check_viewmodel_updates_rows() -> None:

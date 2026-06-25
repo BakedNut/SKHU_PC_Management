@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,6 +69,7 @@ class WmiItem:
     Name: str | None = None
     Capacity: str | None = None
     Speed: str | None = None
+    ConfiguredClockSpeed: str | None = None
     SMBIOSMemoryType: str | None = None
     MemoryType: str | None = None
     AdapterCompatibility: str | None = None
@@ -169,6 +172,7 @@ def _reader_with_os_registry_values(
 @pytest.fixture(autouse=True)
 def disable_low_level_network_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(wmi_pc_info_reader, "read_active_network_info", lambda: None)
+    monkeypatch.setattr(wmi_pc_info_reader, "_get_total_memory_gb_fast", lambda: None)
 
 
 def test_load_pc_info_use_case_uses_reader_port() -> None:
@@ -1384,6 +1388,324 @@ def test_wmi_reader_falls_back_to_processor_wmi_when_cpu_registry_is_missing() -
 
     assert reader._get_cpu_name() == "Intel Core from WMI"
     assert reader.wmi_call_counts.get(("Win32_Processor", None), 0) == 1
+
+
+def test_wmi_reader_reuses_client_for_same_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_namespaces: list[str | None] = []
+
+    class FakeClient:
+        def Win32_Processor(self) -> list[WmiItem]:
+            return [WmiItem(Name="CPU")]
+
+        def Win32_OperatingSystem(self) -> list[WmiItem]:
+            return [WmiItem(Caption="Windows")]
+
+        def MSFT_PhysicalDisk(self) -> list[WmiItem]:
+            return []
+
+        def MSFT_Disk(self) -> list[WmiItem]:
+            return []
+
+    def create_client(namespace: str | None = None) -> FakeClient:
+        created_namespaces.append(namespace)
+        return FakeClient()
+
+    fake_wmi_module = types.ModuleType("wmi")
+    fake_wmi_module.WMI = create_client
+    monkeypatch.setitem(sys.modules, "wmi", fake_wmi_module)
+    reader = WmiPcInfoReader()
+
+    assert reader._wmi_items("Win32_Processor")[0].Name == "CPU"
+    assert reader._wmi_items("Win32_OperatingSystem")[0].Caption == "Windows"
+    assert reader._wmi_client() is reader._wmi_client()
+    assert reader._wmi_client(r"root\Microsoft\Windows\Storage") is reader._wmi_client(
+        r"root\Microsoft\Windows\Storage"
+    )
+    assert created_namespaces == [None, r"root\Microsoft\Windows\Storage"]
+
+
+def test_wmi_reader_returns_empty_list_when_wmi_client_creation_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_client(namespace: str | None = None) -> object:
+        raise RuntimeError("wmi unavailable")
+
+    fake_wmi_module = types.ModuleType("wmi")
+    fake_wmi_module.WMI = fail_client
+    monkeypatch.setitem(sys.modules, "wmi", fake_wmi_module)
+    reader = WmiPcInfoReader()
+
+    assert reader._wmi_items("Win32_Processor") == []
+
+
+def test_wmi_reader_uses_tpm_wmi_version_before_registry_fallback() -> None:
+    registry = FakeRegistry()
+    registry.set_value("HKEY_LOCAL_MACHINE", r"SYSTEM\CurrentControlSet\Services\TPM", "Start", 3)
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_Tpm", r"root\CIMV2\Security\MicrosoftTpm"): [WmiItem(SpecVersion="2.0, 1.3")],
+        },
+        registry=registry,
+    )
+
+    assert reader._get_tpm_info() == (True, "2.0")
+    assert reader.wmi_call_counts.get(("Win32_Tpm", r"root\CIMV2\Security\MicrosoftTpm"), 0) == 1
+
+
+def test_wmi_reader_uses_tpm_registry_fallback_without_disabled_version() -> None:
+    registry = FakeRegistry()
+    registry.set_value("HKEY_LOCAL_MACHINE", r"SYSTEM\CurrentControlSet\Services\TPM", "Start", 3)
+    reader = ControlledWmiPcInfoReader({}, registry=registry)
+
+    installed, version = reader._get_tpm_info()
+
+    assert installed is True
+    assert version is None
+    assert "disabled" not in str(version).lower()
+
+
+def test_wmi_reader_keeps_tpm_unknown_when_wmi_and_registry_are_missing() -> None:
+    reader = ControlledWmiPcInfoReader({}, registry=FakeRegistry())
+
+    assert reader._get_tpm_info() == (None, None)
+
+
+def test_wmi_reader_reads_tpm_wmi_when_registry_is_missing() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_Tpm", r"root\CIMV2\Security\MicrosoftTpm"): [WmiItem(SpecVersion="2.0, 1.3")],
+        },
+        registry=FakeRegistry(),
+    )
+
+    assert reader._get_tpm_info() == (True, "2.0")
+    assert reader.wmi_call_counts.get(("Win32_Tpm", r"root\CIMV2\Security\MicrosoftTpm"), 0) == 1
+
+
+def test_memory_total_fast_path_is_used_when_physical_memory_wmi_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(wmi_pc_info_reader, "_get_total_memory_gb_fast", lambda: 16.0)
+    reader = ControlledWmiPcInfoReader({})
+
+    memory_gb, memory_type, memory_speed_mhz, memory_modules = reader._get_memory_info()
+
+    assert memory_gb == 16.0
+    assert memory_type == "Unknown"
+    assert memory_speed_mhz is None
+    assert memory_modules == []
+
+
+def test_memory_total_fast_path_fills_total_when_physical_memory_capacity_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wmi_pc_info_reader, "_get_total_memory_gb_fast", lambda: 32.0)
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_PhysicalMemory", None): [WmiItem(Speed="5600", SMBIOSMemoryType="34")],
+        }
+    )
+
+    memory_gb, memory_type, memory_speed_mhz, memory_modules = reader._get_memory_info()
+
+    assert memory_gb == 32.0
+    assert memory_type == "DDR5"
+    assert memory_speed_mhz == 5600
+    assert memory_modules == [MemoryModuleInfo(slot="Slot 1", capacity_gb=None, memory_type="DDR5", speed_mhz=5600)]
+
+
+def test_memory_speed_uses_speed_not_configured_clock_speed() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_PhysicalMemory", None): [
+                WmiItem(
+                    Capacity=str(16 * 1024**3),
+                    Speed="5600",
+                    ConfiguredClockSpeed="5200",
+                    SMBIOSMemoryType="34",
+                )
+            ],
+        }
+    )
+
+    memory_gb, memory_type, memory_speed_mhz, memory_modules = reader._get_memory_info()
+
+    assert memory_gb == 16.0
+    assert memory_type == "DDR5"
+    assert memory_speed_mhz == 5600
+    assert memory_modules[0].speed_mhz == 5600
+
+
+def test_memory_speed_ignores_configured_clock_speed_when_speed_is_zero() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_PhysicalMemory", None): [
+                WmiItem(
+                    Capacity=str(16 * 1024**3),
+                    Speed="0",
+                    ConfiguredClockSpeed="5200",
+                    SMBIOSMemoryType="34",
+                )
+            ],
+        }
+    )
+
+    memory_gb, memory_type, memory_speed_mhz, memory_modules = reader._get_memory_info()
+
+    assert memory_gb == 16.0
+    assert memory_type == "DDR5"
+    assert memory_speed_mhz is None
+    assert memory_modules[0].speed_mhz is None
+
+
+def test_memory_speed_ignores_configured_clock_speed_when_speed_is_missing() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_PhysicalMemory", None): [
+                WmiItem(
+                    Capacity=str(16 * 1024**3),
+                    ConfiguredClockSpeed="5200",
+                    SMBIOSMemoryType="34",
+                )
+            ],
+        }
+    )
+
+    memory_gb, memory_type, memory_speed_mhz, memory_modules = reader._get_memory_info()
+
+    assert memory_gb == 16.0
+    assert memory_type == "DDR5"
+    assert memory_speed_mhz is None
+    assert memory_modules[0].speed_mhz is None
+
+
+def test_memory_speed_keeps_speed_when_configured_clock_speed_is_higher() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_PhysicalMemory", None): [
+                WmiItem(
+                    Capacity=str(16 * 1024**3),
+                    Speed="5600",
+                    ConfiguredClockSpeed="6000",
+                    SMBIOSMemoryType="34",
+                )
+            ],
+        }
+    )
+
+    _, _, memory_speed_mhz, memory_modules = reader._get_memory_info()
+
+    assert memory_speed_mhz == 5600
+    assert memory_modules[0].speed_mhz == 5600
+
+
+def test_disk_info_survives_storage_wmi_failure() -> None:
+    class FailingStorageWmiReader(ControlledWmiPcInfoReader):
+        def _wmi_items(self, wmi_class: str, namespace: str | None = None) -> list[Any]:
+            if namespace == r"root\Microsoft\Windows\Storage":
+                raise RuntimeError("storage wmi failed")
+            return super()._wmi_items(wmi_class, namespace)
+
+    reader = FailingStorageWmiReader(
+        {
+            ("Win32_DiskDrive", None): [
+                WmiItem(Model="ST1000DM010 SATA HDD", Size=str(953 * 1024**3), InterfaceType="SCSI", Index="0")
+            ],
+        }
+    )
+
+    disk = reader._get_disks()[0]
+
+    assert disk.model == "ST1000DM010 SATA HDD"
+    assert disk.display_type == "HDD (SATA)"
+
+
+def test_disk_info_is_built_from_win32_diskdrive_when_storage_wmi_is_empty() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_DiskDrive", None): [
+                WmiItem(
+                    Model="Samsung NVMe SSD 980",
+                    Size=str(1024 * 1024**3),
+                    InterfaceType="SCSI",
+                    Index="0",
+                )
+            ],
+            ("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage"): [],
+            ("MSFT_Disk", r"root\Microsoft\Windows\Storage"): [],
+        }
+    )
+
+    disks = reader._get_disks()
+
+    assert len(disks) == 1
+    assert disks[0].model == "Samsung NVMe SSD 980"
+    assert disks[0].actual_size_gib == 1024.0
+    assert disks[0].rated_size == "1TB"
+
+
+def test_disk_nvme_model_is_reflected_in_summary_when_storage_wmi_is_empty() -> None:
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_DiskDrive", None): [
+                WmiItem(
+                    Model="Samsung NVMe SSD 980",
+                    Size=str(512 * 1024**3),
+                    InterfaceType="SCSI",
+                )
+            ],
+        }
+    )
+
+    pc_info = reader.read()
+
+    assert pc_info.disks
+    assert pc_info.disks[0].display_type == "SSD (NVMe)"
+    assert pc_info.disk_nvme_summary == "1개(512GB x1)"
+    assert pc_info.disk_ssd_summary == "없음"
+
+
+def test_disk_rotation_rate_zero_is_classified_as_ssd() -> None:
+    disk = _build_disk_info(
+        WmiItem(Model="SATA SSD", Size=str(256 * 1024**3), MediaRotationRate="0", InterfaceType="SCSI"),
+        [],
+    )
+
+    assert disk.display_type == "SSD (SATA)"
+
+
+def test_disk_positive_rotation_rate_is_classified_as_hdd() -> None:
+    disk = _build_disk_info(
+        WmiItem(Model="SATA HDD", Size=str(1024 * 1024**3), MediaRotationRate="7200", InterfaceType="SCSI"),
+        [],
+    )
+
+    assert disk.display_type == "HDD (SATA)"
+
+
+def test_disk_info_uses_device_io_control_when_storage_type_map_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int | None] = []
+
+    def fake_detect(index: int | None) -> str:
+        calls.append(index)
+        return "NVMe"
+
+    monkeypatch.setattr(wmi_pc_info_reader, "_detect_disk_type_from_physical_drive", fake_detect)
+    reader = ControlledWmiPcInfoReader(
+        {
+            ("Win32_DiskDrive", None): [
+                WmiItem(
+                    Model="Samsung SSD 970 EVO Plus 500GB",
+                    Size=str(500 * 1024**3),
+                    InterfaceType="SCSI",
+                    Index="0",
+                )
+            ],
+        }
+    )
+
+    disk = reader._get_disks()[0]
+
+    assert disk.display_type == "SSD (NVMe)"
+    assert calls == [0]
 
 
 def test_wmi_reader_reads_msft_physical_disk_once_for_disks() -> None:

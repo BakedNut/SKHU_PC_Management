@@ -164,12 +164,17 @@ def _format_ram(pc_info: Any) -> str:
 
 def _format_memory_modules(modules: list[Any]) -> str:
     groups: Counter[tuple[str, int | None, float | None]] = Counter()
+    has_capacity = False
+    has_speed = False
     for module in modules:
         capacity = getattr(module, "capacity_gb", None)
         memory_type = getattr(module, "memory_type", "Unknown")
         speed = getattr(module, "speed_mhz", None)
         if capacity is None:
             continue
+        has_capacity = True
+        if speed:
+            has_speed = True
         groups[(memory_type if memory_type != "Unknown" else "", speed, capacity)] += 1
     if not groups:
         return ""
@@ -183,6 +188,8 @@ def _format_memory_modules(modules: list[Any]) -> str:
             prefix = f"{speed}MHz"
         capacity_text = f"{capacity:g}GB"
         parts.append(f"{prefix + ' ' if prefix else ''}{capacity_text} x{count}")
+    if has_capacity and not has_speed:
+        parts.append("클럭 알 수 없음")
     return ", ".join(parts)
 
 
