@@ -67,6 +67,8 @@ PC 정보 화면의 IP 주소와 MAC 주소는 현재 인터넷 연결 조건을
 
 가상 어댑터, VM/VPN, Docker/WSL, Bluetooth, Loopback/Tunnel 계열은 대표 IP/MAC 표시 대상에서 제외한다. 후보는 Up 상태, 유효한 IPv4 주소, 기본 게이트웨이를 모두 갖춰야 하며 조건을 만족하는 어댑터가 없으면 IP 주소와 MAC 주소를 `알 수 없음`으로 표시한다.
 
+RAM 표시는 module 상세가 있으면 `32GB (2개: DDR5-5600 16GB x2)` 형태를 유지한다. 클럭은 `Win32_PhysicalMemory.Speed`만 사용하고, 없으면 `클럭 알 수 없음`을 표시한다. TPM은 WMI `SpecVersion` 우선이며 registry `Services\TPM\Start` 값으로 `disabled`를 표시하지 않는다. 디스크는 Storage WMI가 실패해도 `Win32_DiskDrive` 기반 row와 NVMe/SSD/HDD summary를 표시한다.
+
 `PC 이름 변경`은 Windows 설정 시스템 정보 화면을 열며 앱 내부 rename dialog를 표시하지 않는다. 테스트 모드에서는 버튼을 비활성화한다.
 
 앱 시작 시 자동 조회는 PC 기본 정보로 제한한다. PC 이름 변경 화면 열기는 Windows 설정 앱 실행만 수행하고 PC 정보 전체 refresh를 자동 실행하지 않는다.
@@ -89,6 +91,8 @@ PC 정보 화면의 IP 주소와 MAC 주소는 현재 인터넷 연결 조건을
 - 앱 시작 시 설정 상태 확인과 PC 점검은 자동 실행하지 않는다.
 - 작업 센터 탭 첫 진입 시 설정 상태 확인과 PC 점검을 자동으로 1회 실행한다.
 - 이후 작업 센터 탭 재진입 시 자동 재조회는 반복하지 않고, 사용자가 `상태 새로고침`을 누르면 다시 실행한다.
+- 설정 상태 확인과 PC 점검은 병렬 실행하되 최종 UI 갱신은 완료 후 한 번만 수행한다.
+- Scheduled Task 상태 확인은 `schtasks` fast path를 우선 사용하며 한국어 오전/오후 시간을 지원한다.
 - Office summary card는 상단 summary row에 없다.
 - Office 설치 상태는 인증 카드 Office row에만 표시한다.
 - PC 점검 table에는 `Office 설치 확인` 행을 표시하지 않는다.
@@ -128,6 +132,8 @@ PC 정보 화면의 IP 주소와 MAC 주소는 현재 인터넷 연결 조건을
 네트워크 상단 summary card(`현재 어댑터`, `IP 할당 방식`, `IP 주소`)는 없다. 중복 정보는 현재 상태 table에서만 표시한다.
 
 PC 정보 화면의 대표 IP/MAC 선택 기준은 이 화면의 어댑터 목록 조회, 현재 상태 표, 고정 IP/DHCP 설정 동작을 변경하지 않는다.
+
+네트워크 탭의 어댑터 목록은 `GetAdaptersAddresses` fast path와 registry TCP/IP interface 보강을 우선 사용한다. 실제 Ethernet/Wi-Fi를 우선하고 virtual/VPN/VM/Docker/WSL/Bluetooth/Loopback/Tunnel 계열은 제외한다.
 
 앱 시작 시 네트워크 어댑터 조회를 자동 실행하지 않는다. 네트워크 탭 첫 진입 시 어댑터 목록과 현재 상태 table을 자동으로 1회 불러온다. 이후 같은 탭 재진입 시 자동 재조회는 반복하지 않고, 사용자가 `어댑터 새로고침`을 누르면 다시 실행한다.
 

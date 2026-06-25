@@ -487,14 +487,16 @@ class WmiPcInfoReader:
             client = self._wmi_client(namespace)
             query_method = getattr(client, wmi_class)
             return list(query_method())
-        except Exception:
+        except Exception as exc:
+            _log_wmi_failure(wmi_class, namespace, exc)
             return []
 
     def _profiled_wmi_items(self, wmi_class: str, namespace: str | None = None) -> list[Any]:
         with _StartupProfiler().step(f"wmi.{wmi_class}"):
             try:
                 return self._wmi_items(wmi_class, namespace)
-            except Exception:
+            except Exception as exc:
+                _log_wmi_failure(wmi_class, namespace, exc)
                 return []
 
     def _wmi_client(self, namespace: str | None = None) -> Any:
@@ -1079,6 +1081,13 @@ def _get_total_memory_gb_fast() -> float | None:
         return _bytes_to_gb(int(status.ullTotalPhys))
     except Exception:
         return None
+
+
+def _log_wmi_failure(wmi_class: str, namespace: str | None, exc: Exception) -> None:
+    if os.environ.get("SKHU_PC_MANAGEMENT_PROFILE_STARTUP") != "1":
+        return
+    namespace_text = f"[{namespace}]" if namespace else ""
+    print(f"pc_info.wmi.{wmi_class}{namespace_text} failed: {exc}")
 
 
 def _windows_release(caption: str, build_text: str | None) -> str | None:

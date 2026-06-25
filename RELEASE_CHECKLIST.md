@@ -81,6 +81,11 @@ $env:SKHU_PC_MANAGEMENT_TEST_MODE = "1"
 - [ ] 일반 권한 실행 시 관리자 권한 경고가 앱을 중단하지 않는다.
 - [ ] PC 정보가 자동 로드된다.
 - [ ] PC 이름, 사용자, Windows 버전, CPU/RAM/GPU, 디스크, TPM, Secure Boot, Boot Mode가 표시된다.
+- [ ] Windows 11 build(`22000+`)인데 registry `ProductName`이 Windows 10으로 남은 PC에서 Windows 11로 표시된다.
+- [ ] RAM이 `32GB (2개: DDR5-5600 16GB x2)`처럼 module 상세를 유지하고, `ConfiguredClockSpeed`가 아니라 `Win32_PhysicalMemory.Speed` 기준으로 표시된다.
+- [ ] RAM module `Speed`가 없으면 적용 클럭을 대신 표시하지 않고 `클럭 알 수 없음`을 표시한다.
+- [ ] TPM은 `Win32_Tpm.SpecVersion` 기준으로 표시되고 `2.0 (disabled)` 문구가 나오지 않는다.
+- [ ] Storage WMI가 실패하거나 비어도 `Win32_DiskDrive` 기반 디스크 row, 정격 용량, NVMe/SSD/HDD summary가 표시된다.
 - [ ] PC 정보 탭의 네트워크 어댑터/IP 주소/MAC 주소가 현재 인터넷 연결 조건을 만족하는 물리 Ethernet 또는 Wi-Fi 기준으로 표시된다.
 - [ ] Ethernet과 Wi-Fi가 동시에 연결되어 있으면 PC 정보 탭에는 Ethernet의 IP/MAC이 표시된다.
 - [ ] Ethernet이 기본 게이트웨이 또는 유효한 IPv4 주소를 갖지 못하고 Wi-Fi만 조건을 만족하면 PC 정보 탭에는 Wi-Fi의 IP/MAC이 표시된다.
@@ -118,7 +123,9 @@ $env:SKHU_PC_MANAGEMENT_TEST_MODE = "1"
 - [ ] 배포본 실행 후 창이 먼저 표시되고 장시간 초기 점검으로 막히지 않는다.
 - [ ] 시작 직후 설정 상태 확인, PC 점검, 네트워크 어댑터 조회가 한꺼번에 실행되지 않는다.
 - [ ] 작업 센터 탭 첫 진입 시 설정 상태와 PC 점검이 자동으로 1회 로드된다.
+- [ ] 작업 센터의 설정 상태 확인과 PC 점검이 병렬로 실행되고, 결과 row 순서가 기존 UI 순서를 유지한다.
 - [ ] 네트워크 탭 첫 진입 시 어댑터 정보가 자동으로 1회 로드된다.
+- [ ] `SKHU_PC_MANAGEMENT_PROFILE_STARTUP=1`, `SKHU_PC_MANAGEMENT_PROFILE_TABS=1`로 startup, network tab, action center 구간 시간이 출력된다.
 - [ ] 같은 탭 재진입 시 자동 재조회가 반복되지 않는다.
 - [ ] `상태 새로고침`과 `어댑터 새로고침` 버튼은 항상 강제 재조회한다.
 - [ ] Chrome/Edge/PotPlayer/Bandizip 실행 버튼이 전체 상태 재조회 없이 즉시 반응한다.
@@ -136,6 +143,8 @@ $env:SKHU_PC_MANAGEMENT_TEST_MODE = "1"
 
 - [ ] 물리 Ethernet/Wi-Fi 어댑터가 표시된다.
 - [ ] 현재 네트워크 상태 표에 IP 할당 방식, IP, subnet, gateway, DNS가 표시된다.
+- [ ] 네트워크 탭 첫 진입 정상 경로에서 PowerShell 없이 `GetAdaptersAddresses` fast path로 목록이 표시된다.
+- [ ] gateway/DHCP/DNS/subnet은 registry fallback으로 보강되며, 일부 값이 비어 있다는 이유만으로 PowerShell fallback을 강제하지 않는다.
 - [ ] PC 정보 탭의 대표 IP/MAC 필터링 변경으로 네트워크 탭의 어댑터 목록과 고정 IP/DHCP 설정 동작이 바뀌지 않았다.
 - [ ] `192.168.` 같은 불완전 IP는 적용 전에 한국어 validation으로 차단된다.
 - [ ] 고정 IP/DHCP 적용 후 어댑터 상태가 다시 로드된다.
@@ -147,8 +156,10 @@ $env:SKHU_PC_MANAGEMENT_TEST_MODE = "1"
 - [ ] 전원 옵션 상태가 표시된다.
 - [ ] 자동종료 작업이 없으면 `주의 / 23시 자동종료 스케줄이 등록되어 있지 않습니다.`로 표시된다.
 - [ ] ScheduledTasks 조회 실패는 `알 수 없음 / 자동종료 스케줄 상태를 확인할 수 없습니다.`로 표시된다.
+- [ ] `schtasks` 한국어 출력 `오후 10:55:00`은 `22:55`로 파싱되어 정상 task가 warning으로 오탐되지 않는다.
 - [ ] 23시 자동종료 적용 후 현재 사용자 바탕화면에 `23시 자동종료 취소.lnk`가 복사된다.
 - [ ] 취소 shortcut이 리소스 원본과 다르면 자동종료 점검이 정상으로 표시되지 않는다.
+- [ ] 취소 shortcut이 없으면 task가 정상이어도 자동종료 점검은 `WARNING`이다.
 
 ### 위험 작업
 
@@ -160,6 +171,8 @@ $env:SKHU_PC_MANAGEMENT_TEST_MODE = "1"
 ## 6. 릴리스 판정
 
 - [ ] `python -m pytest` 통과.
+- [ ] latest version check가 Chrome/Edge/PotPlayer/Bandizip에 대해 유지된다.
+- [ ] `SKHU_PC_MANAGEMENT_PROFILE_STARTUP=1`에서 300ms 이상 구간이 있으면 원인과 남은 병목을 릴리스 노트에 기록한다.
 - [ ] PyInstaller onedir 빌드 성공.
 - [ ] `scripts/check_dist.ps1` 통과.
 - [ ] 테스트 모드 수동 확인 완료.

@@ -25,6 +25,11 @@ SKHU PC Management는 성공회대학교 강의실 Windows PC의 정보 조회, 
 ### PC 정보
 
 - PC 이름, 사용자, Windows 버전, CPU, RAM, GPU, 디스크, 네트워크, TPM, Secure Boot, Boot Mode 표시.
+- OS/CPU는 registry fast path를 우선하고 부족하면 WMI로 fallback한다. Windows 11 build(`22000+`)에서는 registry `ProductName`이 Windows 10으로 남아 있어도 Windows 11 caption으로 보정한다.
+- WMI client는 namespace별로 재사용한다. `SKHU_PC_MANAGEMENT_PROFILE_STARTUP=1`이면 PC 정보 단계와 WMI class별 시간, WMI 실패 class/namespace를 stdout에 출력한다.
+- RAM은 `Win32_PhysicalMemory` module capacity 합계를 우선한다. module capacity가 없을 때만 `GlobalMemoryStatusEx` 총량을 fallback으로 사용한다. RAM 클럭은 `Win32_PhysicalMemory.Speed`만 사용하며 `ConfiguredClockSpeed`는 표시/계산/fallback에 사용하지 않는다. 모든 module의 `Speed`가 없으면 `클럭 알 수 없음`을 표시한다.
+- TPM은 `Win32_Tpm.SpecVersion` WMI 값을 우선한다. registry `Services\TPM\Start`는 fallback 설치 여부 판단에만 사용하며 disabled 상태나 TPM version을 추론하지 않는다.
+- 디스크는 Storage WMI(`MSFT_PhysicalDisk`, `MSFT_Disk`)로 type/bus 정보를 보강하고, Storage WMI가 실패하거나 비어도 `Win32_DiskDrive` 기반으로 model, actual GiB, rated size와 NVMe/SSD/HDD summary를 표시한다. USB/removable disk는 제외한다.
 - 네트워크 IP 주소와 MAC 주소는 현재 인터넷 연결 조건을 만족하는 실제 물리 Ethernet 또는 Wi-Fi 어댑터 기준으로 표시한다.
 - PC 정보 탭의 대표 네트워크 후보는 Up 상태, 유효한 IPv4 주소, 기본 게이트웨이를 모두 갖춰야 한다. `127.x.x.x`, `169.254.x.x`, `0.0.0.0` 주소는 제외한다.
 - Ethernet과 Wi-Fi가 동시에 조건을 만족하면 Ethernet을 우선한다. Ethernet이 조건을 만족하지 못하고 Wi-Fi만 조건을 만족하면 Wi-Fi를 표시한다.
@@ -45,7 +50,9 @@ SKHU PC Management는 성공회대학교 강의실 Windows PC의 정보 조회, 
 - Chrome/Edge/PotPlayer/Bandizip 실행과 PC 이름 변경 화면 열기는 성공 시 완료 팝업을 표시하지 않고, 실패 시에만 경고 팝업을 표시한다.
 - Chrome/Edge/PotPlayer/Bandizip 실행은 실행 후 설정 상태 확인이나 PC 점검 전체 재조회를 수행하지 않는다.
 - 작업 센터 탭 첫 진입 시 설정 상태 확인과 PC 점검을 자동으로 1회 실행한다.
-- `상태 새로고침`은 설정 상태 확인과 PC 점검을 함께 실행한다.
+- `상태 새로고침`은 설정 상태 확인과 PC 점검을 병렬 실행한 뒤 UI를 한 번 갱신한다. UI widget은 worker thread에서 직접 조작하지 않는다.
+- 설정 상태 provider는 가능한 범위에서 병렬 실행하며 결과 순서는 기존 설정 표시 순서를 유지한다. 개별 provider 실패는 해당 항목의 unknown/error 상태로 격리한다.
+- 작업 센터 상태 확인은 외부 프로세스 호출을 줄인다. 전원 옵션은 통합 `powercfg` 조회, Scheduled Task는 `schtasks` CSV fast path + PowerShell fallback, 암호 만료는 `net accounts` fast path를 우선한다. 작업표시줄 shortcut target 상세 확인은 기본 상태 확인에서 생략한다.
 - 강의실 PC 작업: 전원 옵션 `안 함`, 23시 자동종료 등록.
 
 ### 네트워크
@@ -53,6 +60,9 @@ SKHU PC Management는 성공회대학교 강의실 Windows PC의 정보 조회, 
 - 네트워크 어댑터 조회.
 - 현재 네트워크 상태 표 표시.
 - 고정 IP 적용, DHCP 전환.
+- 네트워크 탭 어댑터 목록은 `GetAdaptersAddresses` fast path를 우선한다. gateway, DHCP 여부, DNS, subnet mask는 registry TCP/IP interface 값으로 보강한다.
+- 실제 Ethernet/Wi-Fi를 우선하고 virtual/VPN/VM/Docker/WSL/Bluetooth/Loopback/Tunnel 계열은 제외한다. Ethernet과 Wi-Fi가 모두 유효하면 Ethernet을 우선한다.
+- fast path에서 일부 값이 비어 있어도 어댑터가 있으면 목록을 표시하고, 빈 목록/예외일 때 기존 PowerShell/netsh fallback을 사용한다.
 - PC 정보 탭의 대표 IP/MAC 선택 로직은 표시용이며, 네트워크 탭의 어댑터 목록 조회와 고정 IP/DHCP 설정 동작을 변경하지 않는다.
 - 적용 후 어댑터 목록을 다시 조회하고 같은 어댑터를 재선택한다.
 - 앱 시작 시 자동 조회하지 않고, 네트워크 탭 첫 진입 시 자동으로 1회 조회한다. 이후에는 `어댑터 새로고침` 버튼을 눌렀을 때 다시 조회한다.
@@ -95,9 +105,10 @@ action-only provider:
 ## 자동종료 정책
 
 - 적용 버튼은 `23시 자동 종료` Scheduled Task를 등록한다.
-- shutdown action은 `shutdown.exe`와 `-s -t 300` 의미를 유지한다.
+- 적용은 매일 22:55에 `shutdown.exe -s -t 300 -c "원치 않는 경우 바탕화면의 종료 취소를 실행해주세요"`를 실행하도록 등록한다. 실제 종료 목표 시각은 23:00이다.
 - 적용 성공 후 `resources/23시 자동종료 취소.lnk`를 현재 사용자 바탕화면에 복사한다.
 - 점검은 Scheduled Task 조건과 바탕화면 취소 shortcut 동일성을 함께 확인한다.
+- Scheduled Task 조회는 `schtasks /Query /FO CSV /V` fast path를 우선하며, 한국어 오전/오후 시간(`오후 10:55:00`)을 `22:55`로 파싱한다. 불완전하면 PowerShell ScheduledTasks fallback을 사용한다.
 - 작업이 없으면 `주의`.
 - ScheduledTasks 조회 자체가 실패하면 `알 수 없음`.
 - task와 shortcut이 모두 정상일 때만 정상이다.

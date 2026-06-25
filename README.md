@@ -58,6 +58,11 @@ python -m skhu_pc_management.main
 `PC 정보` 화면은 현재 장비의 기본 정보와 보안/호환 상태를 표시합니다.
 
 - `새로고침`은 PC 정보를 다시 조회합니다.
+- OS/CPU는 registry fast path를 먼저 사용하고, 정보가 부족하면 WMI fallback을 사용합니다. Windows 11 build(`22000+`)인데 registry `ProductName`이 Windows 10으로 남아 있으면 Windows 11로 보정합니다.
+- WMI client는 namespace별로 재사용합니다. `SKHU_PC_MANAGEMENT_PROFILE_STARTUP=1`일 때 WMI class별 소요 시간과 실패 class/namespace가 짧게 출력됩니다.
+- RAM 총량은 WMI module capacity 합계를 우선하며, WMI module 정보가 비어 있을 때만 `GlobalMemoryStatusEx` fast total을 fallback으로 사용합니다. RAM 클럭 표시는 `Win32_PhysicalMemory.Speed`만 사용하고 `ConfiguredClockSpeed`는 사용하지 않습니다. `Speed`가 없으면 `클럭 알 수 없음`으로 표시합니다.
+- TPM은 `Win32_Tpm.SpecVersion` WMI 값을 우선 사용합니다. registry `Services\TPM\Start`는 설치 여부 fallback에만 쓰며 `disabled` 또는 `2.0 (disabled)`로 표시하지 않습니다.
+- 디스크는 Storage WMI 보강 정보를 사용하되, Storage WMI가 비거나 실패해도 `Win32_DiskDrive` 기반으로 model, actual GiB, rated size, NVMe/SSD/HDD summary를 표시합니다. USB/removable disk는 제외합니다.
 - IP 주소와 MAC 주소는 임의의 첫 번째 어댑터가 아니라 현재 인터넷 연결 조건을 만족하는 실제 물리 Ethernet 또는 Wi-Fi 어댑터 기준으로 표시합니다.
 - Ethernet과 Wi-Fi가 동시에 조건을 만족하면 Ethernet을 우선하며, Ethernet이 IPv4 주소와 기본 게이트웨이를 갖지 못하고 Wi-Fi만 조건을 만족하면 Wi-Fi를 표시합니다.
 - 가상 어댑터, VM/VPN, Docker/WSL, Bluetooth, Loopback/Tunnel 계열은 PC 정보 탭의 대표 IP/MAC 표시 대상에서 제외합니다.
@@ -73,7 +78,8 @@ python -m skhu_pc_management.main
 - `인증` 카드에서 Windows 11/10 또는 Office 2024/2021을 선택하고 버튼을 누르면 제품키가 클립보드에 복사되고 인증 준비 화면이 열립니다.
 - `시스템 설정 선택`에서 설정을 선택한 뒤 `선택한 설정 적용`을 누르면 실제 변경을 요청하고, 이후 표시 대상 전체의 현재 상태를 다시 확인합니다.
 - `작업 센터` 탭 첫 진입 시 설정 상태와 PC 점검을 한 번 자동으로 불러옵니다.
-- `상태 새로고침`은 설정 상태 확인과 PC 점검을 함께 실행하므로 시간이 걸릴 수 있습니다.
+- `상태 새로고침`은 설정 상태 확인과 PC 점검을 병렬로 실행한 뒤 한 번만 화면을 갱신합니다. 설정 provider 내부도 가능한 범위에서 병렬 실행하며, 개별 실패는 해당 항목의 unknown/error 상태로 격리합니다.
+- 외부 프로세스 호출은 줄였습니다. 전원 옵션은 `powercfg /q SCHEME_CURRENT` 단일 조회를 우선하고, Scheduled Task는 `schtasks` CSV fast path 후 PowerShell fallback을 사용합니다. 암호 만료는 `net accounts` fast path를 우선하며, 작업표시줄 shortcut target 상세 확인은 기본 상태 확인에서 생략합니다.
 - 설정 상태 표는 `설정 항목 | 현재 상태 | 상세` 3개 열로 표시됩니다. 실행 로그가 아니라 최종 상태 provider 결과를 보여줍니다.
 - Windows 10 선택 상태에서는 Windows 11 전용 시작 메뉴 항목이 선택/표시 대상에서 제외됩니다.
 - Explorer 재시작은 변경 사항 반영을 위한 best-effort 후처리입니다. Explorer 실행 결과는 설정 상태 판정 기준이 아닙니다.
@@ -87,6 +93,8 @@ python -m skhu_pc_management.main
 
 - `새로고침`은 네트워크 어댑터를 다시 조회합니다.
 - `네트워크` 탭 첫 진입 시 어댑터 정보를 한 번 자동으로 불러옵니다.
+- 어댑터 목록은 `GetAdaptersAddresses` fast path를 우선 사용합니다. 실제 Ethernet/Wi-Fi를 우선하고 가상/VPN/VM/Docker/WSL/Bluetooth/Loopback/Tunnel 계열은 제외합니다.
+- gateway, DHCP 여부, DNS, subnet mask는 가능한 경우 registry TCP/IP interface 값으로 보강합니다. 일부 값이 비어 있어도 그것만으로 PowerShell fallback을 강제하지 않습니다.
 - PC 정보 탭의 대표 IP/MAC 선택 기준은 표시용 로직이며, 이 화면의 어댑터 목록 조회와 고정 IP/DHCP 설정 동작을 변경하지 않습니다.
 - `학교 기본 대역 입력`은 고정 IP 입력 폼에 기본 대역 값을 채웁니다.
 - `IP 설정 적용`과 `DHCP 전환`은 실제 네트워크 설정을 변경하므로 확인 대화상자를 거칩니다.
@@ -258,6 +266,16 @@ docs/                     상세 설계/정책 문서
 - 실제 Windows 상태 변경은 단위 테스트에서 실행하지 않고 fake로 검증합니다.
 
 ## 개발/테스트
+
+프로파일링:
+
+```powershell
+$env:SKHU_PC_MANAGEMENT_PROFILE_STARTUP = "1"
+$env:SKHU_PC_MANAGEMENT_PROFILE_TABS = "1"
+python -m skhu_pc_management
+```
+
+`SKHU_PC_MANAGEMENT_PROFILE_STARTUP=1`은 PC 정보 단계와 WMI class별 시간을 출력합니다. `SKHU_PC_MANAGEMENT_PROFILE_TABS=1`은 네트워크 탭, 작업 센터, 전원/예약 작업/provider 구간 시간을 출력합니다.
 
 전체 테스트:
 

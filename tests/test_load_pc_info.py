@@ -1436,6 +1436,28 @@ def test_wmi_reader_returns_empty_list_when_wmi_client_creation_fails(monkeypatc
     assert reader._wmi_items("Win32_Processor") == []
 
 
+def test_wmi_reader_logs_wmi_failure_only_when_startup_profile_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_client(namespace: str | None = None) -> object:
+        raise RuntimeError("wmi unavailable")
+
+    fake_wmi_module = types.ModuleType("wmi")
+    fake_wmi_module.WMI = fail_client
+    monkeypatch.setitem(sys.modules, "wmi", fake_wmi_module)
+    reader = WmiPcInfoReader()
+
+    assert reader._wmi_items("Win32_DiskDrive") == []
+    assert capsys.readouterr().out == ""
+
+    monkeypatch.setenv("SKHU_PC_MANAGEMENT_PROFILE_STARTUP", "1")
+    assert reader._wmi_items("MSFT_PhysicalDisk", r"root\Microsoft\Windows\Storage") == []
+
+    output = capsys.readouterr().out
+    assert "pc_info.wmi.MSFT_PhysicalDisk[root\\Microsoft\\Windows\\Storage] failed: wmi unavailable" in output
+
+
 def test_wmi_reader_uses_tpm_wmi_version_before_registry_fallback() -> None:
     registry = FakeRegistry()
     registry.set_value("HKEY_LOCAL_MACHINE", r"SYSTEM\CurrentControlSet\Services\TPM", "Start", 3)

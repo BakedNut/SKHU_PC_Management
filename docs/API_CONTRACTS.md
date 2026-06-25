@@ -67,6 +67,10 @@
 - `LoadPcInfo`의 `PcInfo.network_info`는 PC 정보 탭 표시용 대표 IP/MAC이다. 후보는 현재 Up 상태인 실제 물리 Ethernet 또는 Wi-Fi, 유효한 IPv4 주소, 기본 게이트웨이를 모두 만족해야 한다.
 - 대표 네트워크 선택은 Ethernet을 Wi-Fi보다 우선하고, 가상/VM/VPN/Docker/WSL/Bluetooth/Loopback/Tunnel 계열은 제외한다. 조건을 만족하는 후보가 없으면 `network_info=None`으로 반환한다.
 - 이 대표 네트워크 선택은 `ListNetworkAdapters`와 `NetshNetworkConfigurator.list_adapters()`의 어댑터 목록/정적 IP 설정 계약을 변경하지 않는다.
+- `WmiPcInfoReader`는 OS/CPU registry fast path, WMI namespace client cache, RAM module 우선 + fast total fallback, TPM WMI 우선 + registry fallback, Storage WMI + `Win32_DiskDrive` fallback을 사용한다.
+- RAM 클럭 표시 source는 `Win32_PhysicalMemory.Speed`뿐이다. `ConfiguredClockSpeed`는 표시/계산/fallback에 사용하지 않는다.
+- TPM registry fallback은 `Services\TPM\Start`로 disabled 상태나 version을 추론하지 않는다.
+- 네트워크 adapter fast path는 `GetAdaptersAddresses`와 registry TCP/IP interface 보강을 사용한다. gateway/DHCP/DNS/subnet 값이 일부 비었다는 이유만으로 PowerShell fallback을 강제하지 않는다.
 
 ## Port 계약
 
@@ -105,6 +109,8 @@
 - `windows_system_maintenance.py`
   - Chrome/Edge 초기화는 `User Data` root 전체 삭제.
   - 23시 자동종료 task 등록 후 취소 shortcut 복사.
+  - 23시 자동종료 task는 22:55에 `shutdown.exe -s -t 300`을 실행해 23:00 종료를 목표로 한다.
+  - Scheduled Task reader는 `schtasks` CSV fast path를 우선하고, 한국어 오전/오후 시간 파싱을 지원하며, 불완전하면 PowerShell fallback을 사용한다.
 - `windows_settings_launcher.py`
   - Windows 설정 시스템 정보 화면만 열고 이름 변경 자체는 수행하지 않음.
 
