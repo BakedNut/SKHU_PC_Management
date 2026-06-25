@@ -151,6 +151,21 @@ class ControlledWmiPcInfoReader(WmiPcInfoReader):
         return None
 
 
+def _reader_with_os_registry_values(
+    *,
+    product_name: str,
+    current_build: str,
+    display_version: str | None = None,
+) -> ControlledWmiPcInfoReader:
+    registry = FakeRegistry()
+    path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+    registry.set_value("HKEY_LOCAL_MACHINE", path, "ProductName", product_name)
+    registry.set_value("HKEY_LOCAL_MACHINE", path, "CurrentBuildNumber", current_build)
+    if display_version is not None:
+        registry.set_value("HKEY_LOCAL_MACHINE", path, "DisplayVersion", display_version)
+    return ControlledWmiPcInfoReader({}, registry=registry)
+
+
 @pytest.fixture(autouse=True)
 def disable_low_level_network_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(wmi_pc_info_reader, "read_active_network_info", lambda: None)
@@ -434,6 +449,70 @@ def test_wmi_reader_uses_os_registry_fast_path_without_operating_system_wmi() ->
     assert os_info["release"] == "24H2"
     assert os_info["ubr"] == "3323"
     assert reader.wmi_call_counts.get(("Win32_OperatingSystem", None), 0) == 0
+
+
+def test_os_registry_fast_path_corrects_windows_10_product_name_for_windows_11_build() -> None:
+    reader = _reader_with_os_registry_values(
+        product_name="Windows 10 Pro",
+        current_build="26200",
+        display_version="25H2",
+    )
+
+    os_info = reader._get_windows_version_info()
+
+    assert os_info["caption"] == "Windows 11 Pro"
+    assert os_info["release"] == "25H2"
+    assert reader.wmi_call_counts.get(("Win32_OperatingSystem", None), 0) == 0
+
+
+def test_os_registry_fast_path_corrects_microsoft_windows_10_product_name_for_windows_11_build() -> None:
+    reader = _reader_with_os_registry_values(
+        product_name="Microsoft Windows 10 Pro",
+        current_build="22631",
+        display_version="23H2",
+    )
+
+    os_info = reader._get_windows_version_info()
+
+    assert os_info["caption"] == "Windows 11 Pro"
+    assert os_info["release"] == "23H2"
+    assert reader.wmi_call_counts.get(("Win32_OperatingSystem", None), 0) == 0
+
+
+def test_os_registry_fast_path_preserves_edition_when_correcting_windows_11_caption() -> None:
+    reader = _reader_with_os_registry_values(
+        product_name="Windows 10 Education",
+        current_build="26100",
+    )
+
+    os_info = reader._get_windows_version_info()
+
+    assert os_info["caption"] == "Windows 11 Education"
+    assert os_info["release"] == "24H2"
+
+
+def test_os_registry_fast_path_keeps_windows_10_caption_for_windows_10_build() -> None:
+    reader = _reader_with_os_registry_values(
+        product_name="Windows 10 Pro",
+        current_build="19045",
+    )
+
+    os_info = reader._get_windows_version_info()
+
+    assert os_info["caption"] == "Windows 10 Pro"
+    assert os_info["release"] == "22H2"
+
+
+def test_os_registry_fast_path_keeps_existing_windows_11_caption() -> None:
+    reader = _reader_with_os_registry_values(
+        product_name="Windows 11 Pro",
+        current_build="26200",
+    )
+
+    os_info = reader._get_windows_version_info()
+
+    assert os_info["caption"] == "Windows 11 Pro"
+    assert os_info["release"] == "25H2"
 
 
 def test_disk_info_can_be_built_from_win32_diskdrive_only() -> None:

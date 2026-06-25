@@ -148,11 +148,11 @@ class WmiPcInfoReader:
         except Exception:
             return None
 
-        caption = _normalize_os_caption(product_name)
+        caption = _normalize_registry_windows_caption(product_name, current_build)
         if caption == "알 수 없음(운영체제 캡션 없음)" or current_build is None:
             return None
 
-        release = display_version or release_id or _windows_release(product_name or caption, current_build)
+        release = display_version or release_id or _windows_release(caption, current_build)
         return {
             "caption": caption,
             "build": current_build,
@@ -1068,6 +1068,14 @@ def _normalize_os_caption(caption: str | None) -> str:
         text = text.replace(token, "")
     text = re.sub(r"\s+", " ", text).strip()
     return text or "알 수 없음(운영체제 캡션 없음)"
+
+
+def _normalize_registry_windows_caption(product_name: str | None, build_text: str | None) -> str:
+    caption = _normalize_os_caption(product_name)
+    build = _to_int(build_text)
+    if build is None or build < 22000:
+        return caption
+    return re.sub(r"^Windows\s+10\b", "Windows 11", caption, count=1, flags=re.IGNORECASE)
 
 
 def _memory_type_from_code(code: int) -> str:
