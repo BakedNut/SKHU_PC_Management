@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
+import pytest
+
 from skhu_pc_management.application.safety import SafetyGuard, TEST_MODE_DISABLED_MESSAGE
 from skhu_pc_management.application.use_cases.activate_office import ActivateOffice
 from skhu_pc_management.application.use_cases.activate_windows import ActivateWindows
@@ -17,6 +19,7 @@ from skhu_pc_management.application.use_cases.set_dhcp import SetDhcp
 from skhu_pc_management.application.use_cases.system_settings_actions import SystemSettingsActions
 from skhu_pc_management.domain.network.models import NetworkConfigResult, StaticIpConfig
 from skhu_pc_management.domain.resources.models import TaskbarApplyResult
+from skhu_pc_management.infrastructure.windows import windows_settings_launcher as settings_launcher_module
 from skhu_pc_management.infrastructure.windows.windows_settings_launcher import WindowsSettingsAppLauncher
 
 
@@ -258,13 +261,17 @@ def test_test_mode_blocks_pc_rename_program_launch_and_maintenance_calls() -> No
     assert maintenance.calls == []
 
 
-def test_open_pc_name_settings_launches_windows_settings_about_page() -> None:
+def test_open_pc_name_settings_launches_windows_settings_about_page(monkeypatch: pytest.MonkeyPatch) -> None:
     process_launcher = RecordingProcessLauncher()
     settings_launcher = WindowsSettingsAppLauncher(process_launcher)
+    opened_uris: list[str] = []
+
+    monkeypatch.setattr(settings_launcher_module, "_open_settings_uri", opened_uris.append)
 
     settings_launcher.open_pc_name_settings()
 
-    assert process_launcher.launches == [(Path("cmd"), ("/c", "start", "", "ms-settings:about"))]
+    assert opened_uris == ["ms-settings:about"]
+    assert process_launcher.launches == []
 
 
 def test_test_mode_blocks_special_system_settings_actions() -> None:

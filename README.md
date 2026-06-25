@@ -69,6 +69,7 @@ python -m skhu_pc_management.main
 - 조건을 만족하는 어댑터가 없으면 IP 주소와 MAC 주소는 `알 수 없음`으로 표시합니다.
 - `PC 이름 변경`은 Windows 설정의 시스템 정보 화면을 엽니다. 실제 이름 변경과 재부팅 안내는 Windows 설정 UI에서 처리합니다.
 - 성공 시 별도 완료 팝업은 띄우지 않고 Windows 설정 화면이 열리는 것으로 결과를 확인합니다.
+- Windows 설정 화면은 `ms-settings:about` URI를 직접 열며, `cmd` 또는 PowerShell 콘솔 창을 띄우지 않습니다.
 - 앱은 더 이상 `QInputDialog`로 새 PC 이름을 입력받거나 `Rename-Computer`를 UI에서 직접 실행하지 않습니다.
 
 ### 작업 센터

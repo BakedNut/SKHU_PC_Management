@@ -69,7 +69,7 @@ PC 정보 화면의 IP 주소와 MAC 주소는 현재 인터넷 연결 조건을
 
 RAM 표시는 module 상세가 있으면 `32GB (2개: DDR5-5600 16GB x2)` 형태를 유지한다. 클럭은 `Win32_PhysicalMemory.Speed`만 사용하고, 없으면 `클럭 알 수 없음`을 표시한다. TPM은 WMI `SpecVersion` 우선이며 registry `Services\TPM\Start` 값으로 `disabled`를 표시하지 않는다. 디스크는 Storage WMI가 실패해도 `Win32_DiskDrive` 기반 row와 NVMe/SSD/HDD summary를 표시한다.
 
-`PC 이름 변경`은 Windows 설정 시스템 정보 화면을 열며 앱 내부 rename dialog를 표시하지 않는다. 테스트 모드에서는 버튼을 비활성화한다.
+`PC 이름 변경`은 Windows 설정 시스템 정보 화면을 열며 앱 내부 rename dialog나 cmd/PowerShell 콘솔 창을 표시하지 않는다. 테스트 모드에서는 버튼을 비활성화한다.
 
 앱 시작 시 자동 조회는 PC 기본 정보로 제한한다. PC 이름 변경 화면 열기는 Windows 설정 앱 실행만 수행하고 PC 정보 전체 refresh를 자동 실행하지 않는다.
 

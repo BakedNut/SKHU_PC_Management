@@ -80,7 +80,7 @@
 | `CommandRunner` | `run(command)` | `SubprocessCommandRunner` | Windows에서는 hidden subprocess 옵션 사용 |
 | `NetworkConfigurator` | `list_adapters`, `apply_static_ip`, `set_dhcp` | `NetshNetworkConfigurator` | PowerShell JSON 우선, netsh fallback |
 | `ProcessLauncher` | `launch(executable, args)` | `WindowsProcessLauncher` | 사용자가 보는 앱 실행은 숨기지 않음 |
-| `WindowsSettingsLauncher` | `open_pc_name_settings()` | `WindowsSettingsAppLauncher` | `cmd /c start "" ms-settings:about` |
+| `WindowsSettingsLauncher` | `open_pc_name_settings()` | `WindowsSettingsAppLauncher` | `ShellExecuteW`로 `ms-settings:about` 직접 open, cmd/PowerShell 콘솔 실행 금지 |
 | `ProductKeyProvider` | `get_windows_product_key`, `get_office_product_key` | `EmbeddedProductKeyProvider` | local module dynamic import |
 | `Clipboard` | `set_text` | `WindowsClipboard` | 제품키 값 노출 금지 |
 | `OfficeLauncher` | `launch_office_activation` | `WindowsOfficeLauncher` | Excel resolver 사용 |

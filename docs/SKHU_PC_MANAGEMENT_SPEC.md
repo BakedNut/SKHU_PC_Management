@@ -35,7 +35,7 @@ SKHU PC Management는 성공회대학교 강의실 Windows PC의 정보 조회, 
 - Ethernet과 Wi-Fi가 동시에 조건을 만족하면 Ethernet을 우선한다. Ethernet이 조건을 만족하지 못하고 Wi-Fi만 조건을 만족하면 Wi-Fi를 표시한다.
 - 가상 어댑터, VM/VPN, Docker/WSL, Bluetooth, Loopback/Tunnel 계열은 PC 정보 탭의 대표 IP/MAC 표시 대상에서 제외한다.
 - 조건을 만족하는 어댑터가 없으면 IP 주소와 MAC 주소는 `알 수 없음`으로 표시한다.
-- `PC 이름 변경` 버튼은 Windows 설정 `ms-settings:about` 화면을 연다.
+- `PC 이름 변경` 버튼은 Windows 설정 `ms-settings:about` 화면을 열며, cmd 또는 PowerShell 콘솔 창을 표시하지 않는다.
 - 앱 UI는 새 이름을 직접 입력받지 않고 `Rename-Computer`를 직접 호출하지 않는다.
 - `PC 이름 변경` 버튼은 Windows 설정 화면만 열며 PC 정보 전체 refresh를 자동 실행하지 않는다.
 
